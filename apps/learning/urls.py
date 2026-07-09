@@ -1,0 +1,35 @@
+from django.urls import path
+
+from .views import (
+    AddSubjectView,
+    CheckLevelProgressView,
+    ExploreSubjectsView,
+    GenerateQuizView,
+    LeaderboardView,
+    MarkInterestView,
+    MarkResourceLinksViewedView,
+    NotificationStatusView,
+    OthersLearningView,
+    RemoveSubjectView,
+    SetNotificationFrequencyView,
+    SubjectSuggestionsView,
+    SubmitQuizView,
+    TopicLeaderboardView,
+)
+
+urlpatterns = [
+    path("subjects/<int:subject_id>/progress/check", CheckLevelProgressView.as_view(), name="check-level-progress"),
+    path("subjects/<int:subject_id>/add", AddSubjectView.as_view(), name="add-subject"),
+    path("subjects/<int:subject_id>/remove", RemoveSubjectView.as_view(), name="remove-subject"),
+    path("subjects/<int:subject_id>/notification-frequency", SetNotificationFrequencyView.as_view(), name="set-notification-frequency"),
+    path("subjects/<int:subject_id>/notification-status", NotificationStatusView.as_view(), name="notification-status"),
+    path("subjects/suggestions", SubjectSuggestionsView.as_view(), name="subject-suggestions"),
+    path("explore", ExploreSubjectsView.as_view(), name="explore"),
+    path("explore/<int:subject_id>/interest", MarkInterestView.as_view(), name="mark-interest"),
+    path("leaderboard", LeaderboardView.as_view(), name="leaderboard"),
+    path("topics/<int:topic_id>/leaderboard", TopicLeaderboardView.as_view(), name="topic-leaderboard"),
+    path("topics/<int:topic_id>/others-learning", OthersLearningView.as_view(), name="others-learning"),
+    path("topics/<int:topic_id>/quiz/generate", GenerateQuizView.as_view(), name="quiz-generate"),
+    path("topics/<int:topic_id>/quiz/submit", SubmitQuizView.as_view(), name="quiz-submit"),
+    path("topics/<int:topic_id>/resource-links-viewed", MarkResourceLinksViewedView.as_view(), name="resource-links-viewed"),
+]
