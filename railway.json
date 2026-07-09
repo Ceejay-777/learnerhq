@@ -4,19 +4,9 @@
     "builder": "DOCKERFILE",
     "dockerfilePath": "Dockerfile"
   },
-  "services": [
-    {
-      "name": "web",
-      "startCommand": "python manage.py migrate --settings=config.settings.production --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 4 --timeout 120",
-      "healthcheckPath": "/api/health/"
-    },
-    {
-      "name": "worker",
-      "startCommand": "celery -A config worker --loglevel=info --concurrency=2"
-    },
-    {
-      "name": "beat",
-      "startCommand": "celery -A config beat --loglevel=info"
-    }
-  ]
+  "deploy": {
+    "startCommand": "gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 4 --timeout 120",
+    "preDeployCommand": "python manage.py migrate --settings=config.settings.production --noinput",
+    "healthcheckPath": "/api/health/"
+  }
 }
