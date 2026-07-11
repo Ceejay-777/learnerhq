@@ -165,7 +165,11 @@ class PasswordResetRequestView(GenericAPIView):
             user = User.objects.get(email=serializer.validated_data['email'])
             token = create_password_reset_token(user)
             from config.utils.tasks import send_password_reset_email
-            send_password_reset_email.delay(user.email, token.token)
+            try:
+                send_password_reset_email.delay(user.email, token.token)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception("Failed to dispatch password reset email to %s", user.email)
         except User.DoesNotExist:
             pass
         return Response(
