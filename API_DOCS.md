@@ -145,8 +145,6 @@ Response `200` (always — no user enumeration):
 {"detail": "If that email exists, a reset link has been sent.", "status": "success"}
 ```
 
-> ⚠️ **BUG:** Returns `500` HTML error when the email **exists** because the Celery task dispatch to Redis fails (likely no Redis provisioned or `CELERY_BROKER_URL` not configured).
-
 ---
 
 ### `POST /api/auth/password-reset/confirm`
@@ -262,7 +260,8 @@ Marks interest in a subject.
 
 Response `201`: No body.
 
-> ⚠️ **BUG:** Returns `500` HTML error when `subject_id` doesn't exist — `Subject.DoesNotExist` not caught.
+**Error cases:**
+- `404` — Subject not found: `{"detail": "Not found.", "status": "error"}`
 
 ---
 
@@ -272,7 +271,8 @@ Removes interest in a subject.
 
 Response `204`: No body.
 
-> ⚠️ **BUG:** Returns `500` HTML error when `subject_id` doesn't exist — `Subject.DoesNotExist` not caught.
+**Error cases:**
+- `404` — Subject not found: `{"detail": "Not found.", "status": "error"}`
 
 ---
 
@@ -284,8 +284,7 @@ Response `201`: No body.
 
 **Error cases:**
 - `400` — Limit reached / already added: `{"detail": "...", "status": "error"}`
-
-> ⚠️ **BUG:** Returns `500` HTML error when `subject_id` doesn't exist — `Subject.DoesNotExist` not caught.
+- `404` — Subject not found: `{"detail": "Not found.", "status": "error"}`
 
 ---
 
@@ -312,7 +311,8 @@ Response `200`:
 }
 ```
 
-> ⚠️ **BUG:** Returns `500` HTML error when `subject_id` doesn't exist — `Subject.DoesNotExist` not caught.
+**Error cases:**
+- `404` — Subject not found: `{"detail": "Not found.", "status": "error"}`
 
 ---
 
@@ -329,9 +329,7 @@ Response `200`:
 ```
 
 **Error cases:**
-- `404` — Subject not added: `{"detail": "Not found.", "status": "error"}`
-
-> ⚠️ **BUG:** Returns `500` HTML error when `subject_id` doesn't exist — `Subject.DoesNotExist` not caught.
+- `404` — Subject not found: `{"detail": "Not found.", "status": "error"}`
 
 ---
 
@@ -348,8 +346,7 @@ Response `200`: No body.
 
 **Error cases:**
 - `400` — Invalid input: `{"detail": "...", "status": "error"}`
-
-> ⚠️ **BUG:** Returns `500` HTML error when `subject_id` doesn't exist — `Subject.DoesNotExist` not caught.
+- `404` — Subject not found: `{"detail": "Not found.", "status": "error"}`
 
 ---
 
@@ -387,7 +384,14 @@ Response `200`:
 
 Users also learning this topic.
 
-> ⚠️ **BUG:** Returns `500` HTML error when `topic_id` doesn't exist — `topic_leaderboard` service doesn't handle missing topics.
+Response `200`:
+```json
+[]
+```
+(Empty when no data.)
+
+**Error cases:**
+- `404` — Topic not found: `{"detail": "Not found.", "status": "error"}`
 
 ---
 
@@ -414,7 +418,9 @@ Response `200`:
 }
 ```
 
-> ⚠️ **BUG:** Returns `500` HTML error when `topic_id` doesn't exist — `Topic.DoesNotExist` not caught.
+**Error cases:**
+- `404` — Topic not found: `{"detail": "Not found.", "status": "error"}`
+- `400` — Blocked by preconditions: `{"detail": "...", "status": "error"}`
 
 ---
 
@@ -430,7 +436,21 @@ Request:
 }
 ```
 
-> ⚠️ **BUG:** Returns `500` HTML error with invalid `attempt_id` — `submit_quiz` service doesn't handle missing attempts.
+Response `200`:
+```json
+{
+  "id": 1,
+  "passed": true,
+  "score": 80,
+  "total_points": 100,
+  "attempt_number": 1,
+  "quiz_type": "NORMAL"
+}
+```
+
+**Error cases:**
+- `404` — Attempt not found: `{"detail": "Not found.", "status": "error"}`
+- `400` — Already submitted / wrong answer count: `{"detail": "...", "status": "error"}`
 
 ---
 
@@ -438,25 +458,24 @@ Request:
 
 Marks resource links as viewed.
 
-> ⚠️ **BUG:** Returns `500` HTML error when `topic_id` doesn't exist — `Topic.DoesNotExist` not caught.
+Response `200`:
+```json
+{
+  "status": "...",
+  "resource_links_viewed_at": "2026-07-11T10:00:00Z"
+}
+```
+
+**Error cases:**
+- `404` — Topic not found: `{"detail": "Not found.", "status": "error"}`
 
 ---
 
-## Issues Summary
+## Production Status
 
-### Critical — 500 HTML instead of JSON
+✅ **All endpoints return JSON consistently.** No HTML error pages are returned. All unhandled exceptions are caught globally and returned as `{"detail": "Internal server error.", "status": "error"}` with a logged traceback on the server.
 
-| # | Endpoint | Cause |
-|---|---|---|
-| 1 | `POST /api/auth/password-reset/request` (when email exists) | Celery `delay()` to Redis fails (broker unreachable) |
-| 2 | All `{subject_id}` endpoints with invalid ID | `Subject.objects.get(id=...)` raises uncaught `DoesNotExist` |
-| 3 | All `{topic_id}` endpoints with invalid ID | `Topic.objects.get(id=...)` raises uncaught `DoesNotExist` |
-| 4 | `POST /api/learning/topics/{id}/quiz/submit` (invalid attempt) | `submit_quiz` service doesn't handle missing attempt |
-
-**Root cause:** Views use `Model.objects.get(id=...)` without try-except. Django's `DoesNotExist` is not a DRF `APIException`, so the custom exception handler misses it, and Django returns an HTML 500 page instead of JSON.
-
-### Fix recommendations
-
-1. **Fix the views:** Replace `.get()` with `get_object_or_404()` from Django shortcuts, or wrap in try-except returning JSON `404`.
-2. **Fix the exception handler:** Update `apps/core/exceptions.py` to catch `django.core.exception.ObjectDoesNotExist` and return JSON 404.
-3. **Fix password reset Celery issue:** Either provision Redis in Railway and set `CELERY_BROKER_URL`, or wrap the `delay()` call in a try-except.
+**Fixes deployed:**
+1. `ObjectDoesNotExist` → `Http404` conversion in global exception handler (covers all model lookups)
+2. Celery `delay()` failure in password reset wrapped in try-except
+3. Catch-all in exception handler prevents HTML 500 pages
