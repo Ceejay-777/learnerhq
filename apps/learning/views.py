@@ -20,6 +20,7 @@ from .serializers import (
     SubjectSuggestionSerializer,
     SubmitQuizRequestSerializer,
     SubmitQuizResponseSerializer,
+    TopicDetailSerializer,
     TopicLeaderboardEntrySerializer,
 )
 from .services import (
@@ -351,3 +352,27 @@ class CreateSubjectView(GenericAPIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class TopicDetailView(GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["Learning"],
+        summary="Get topic details and content",
+        responses={200: TopicDetailSerializer},
+    )
+    def get(self, request, topic_id):
+        topic = Topic.objects.select_related("subject").get(id=topic_id)
+        return Response({
+            "id": topic.id,
+            "title": topic.title,
+            "summary": topic.summary,
+            "resource_links": topic.resource_links,
+            "level": topic.level,
+            "order": topic.order,
+            "content_status": topic.content_status,
+            "review_status": topic.review_status,
+            "subject_id": topic.subject_id,
+            "subject_name": topic.subject.name,
+        })

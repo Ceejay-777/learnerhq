@@ -15,6 +15,7 @@ from .views import (
     SetNotificationFrequencyView,
     SubjectSuggestionsView,
     SubmitQuizView,
+    TopicDetailView,
     TopicLeaderboardView,
 )
 
@@ -34,4 +35,5 @@ urlpatterns = [
     path("topics/<int:topic_id>/quiz/generate", GenerateQuizView.as_view(), name="quiz-generate"),
     path("topics/<int:topic_id>/quiz/submit", SubmitQuizView.as_view(), name="quiz-submit"),
     path("topics/<int:topic_id>/resource-links-viewed", MarkResourceLinksViewedView.as_view(), name="resource-links-viewed"),
+    path("topics/<int:topic_id>", TopicDetailView.as_view(), name="topic-detail"),
 ]

@@ -125,6 +125,19 @@ class CreateSubjectSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=200, help_text="Subject name to create or resolve.")
 
 
+class TopicDetailSerializer(serializers.Serializer):
+    id = serializers.IntegerField(help_text="Topic ID.")
+    title = serializers.CharField(help_text="Topic title.")
+    summary = serializers.CharField(help_text="Generated content summary for this topic.")
+    resource_links = serializers.JSONField(help_text="List of external resource links.")
+    level = serializers.IntegerField(help_text="Difficulty level (1-3).")
+    order = serializers.IntegerField(help_text="Order within the subject's roadmap.")
+    content_status = serializers.CharField(help_text="Content generation status.")
+    review_status = serializers.CharField(help_text="Content review status.")
+    subject_id = serializers.IntegerField(help_text="Parent subject ID.")
+    subject_name = serializers.CharField(help_text="Parent subject name.")
+
+
 class ResourceLinksViewedResponseSerializer(serializers.Serializer):
     status = serializers.CharField(help_text="Current topic progress status.")
     resource_links_viewed_at = serializers.DateTimeField(
