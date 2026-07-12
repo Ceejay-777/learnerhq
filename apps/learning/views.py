@@ -4,10 +4,11 @@ from rest_framework.generics import GenericAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import Subject, Topic, UserSubjectProgress
+from .models import Subject, Topic, TopicProgress, UserSubjectProgress
 from apps.ai.exceptions import ProviderError
 from .serializers import (
     CreateSubjectSerializer,
+    EnrolledSubjectListSerializer,
     ExploreSubjectSerializer,
     GenerateQuizRequestSerializer,
     GenerateQuizResponseSerializer,
@@ -17,6 +18,7 @@ from .serializers import (
     NotificationStatusSerializer,
     OthersLearningEntrySerializer,
     ResourceLinksViewedResponseSerializer,
+    SubjectDetailSerializer,
     SubjectSuggestionSerializer,
     SubmitQuizRequestSerializer,
     SubmitQuizResponseSerializer,
@@ -375,4 +377,155 @@ class TopicDetailView(GenericAPIView):
             "review_status": topic.review_status,
             "subject_id": topic.subject_id,
             "subject_name": topic.subject.name,
+        })
+
+
+class EnrolledSubjectsView(GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["Learning"],
+        summary="List enrolled subjects with progress",
+        responses={200: EnrolledSubjectListSerializer(many=True)},
+    )
+    def get(self, request):
+        from django.db.models import Count, Q
+        from math import floor
+
+        usps = (
+            UserSubjectProgress.objects
+            .filter(user=request.user)
+            .select_related("subject")
+            .annotate(
+                topics_total=Count("subject__topics", distinct=True),
+                topics_passed=Count(
+                    "subject__topics__user_progress",
+                    filter=Q(
+                        subject__topics__user_progress__user=request.user,
+                        subject__topics__user_progress__status__in=[
+                            TopicProgress.Status.PASSED,
+                            TopicProgress.Status.ADVANCED_PASSED,
+                        ],
+                    ),
+                    distinct=True,
+                ),
+                topics_advanced_passed=Count(
+                    "subject__topics__user_progress",
+                    filter=Q(
+                        subject__topics__user_progress__user=request.user,
+                        subject__topics__user_progress__status=TopicProgress.Status.ADVANCED_PASSED,
+                    ),
+                    distinct=True,
+                ),
+            )
+            .order_by("-created_at")
+        )
+
+        results = []
+        for usp in usps:
+            passed = usp.topics_passed if usp.topics_passed is not None else 0
+            total = usp.topics_total if usp.topics_total is not None else 0
+            pct = floor((passed / total) * 100) if total > 0 else 0
+            results.append({
+                "id": usp.subject_id,
+                "name": usp.subject.name,
+                "status": usp.status,
+                "points": usp.points,
+                "level_unlocked": usp.level_unlocked,
+                "topics_total": total,
+                "topics_passed": passed,
+                "topics_advanced_passed": usp.topics_advanced_passed or 0,
+                "percent_complete": pct,
+                "created_at": usp.created_at,
+                "notification_frequency_hours": usp.notification_frequency_hours,
+                "next_due_at": usp.next_due_at,
+            })
+        return Response(results)
+
+
+class SubjectDetailView(GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["Learning"],
+        summary="Get full subject detail with topics and progress",
+        responses={200: SubjectDetailSerializer, 404: None},
+    )
+    def get(self, request, subject_id):
+        from django.db.models import OuterRef, Subquery, Count, Q
+        from .services import compute_level_threshold
+
+        try:
+            usp = (
+                UserSubjectProgress.objects
+                .select_related("subject")
+                .get(user=request.user, subject_id=subject_id)
+            )
+        except UserSubjectProgress.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        topic_statuses = (
+            TopicProgress.objects
+            .filter(user=request.user, topic=OuterRef("pk"))
+            .values("status")[:1]
+        )
+        completed_subq = (
+            TopicProgress.objects
+            .filter(user=request.user, topic=OuterRef("pk"))
+            .values("completed_at")[:1]
+        )
+        topics = (
+            Topic.objects
+            .filter(subject=usp.subject)
+            .annotate(
+                user_progress_status=Subquery(topic_statuses),
+                user_completed_at=Subquery(completed_subq),
+            )
+            .order_by("level", "order")
+        )
+
+        level_groups = {}
+        for t in topics:
+            level_groups.setdefault(t.level, {"total": 0, "passed": 0})
+            level_groups[t.level]["total"] += 1
+            if t.user_progress_status in (TopicProgress.Status.PASSED, TopicProgress.Status.ADVANCED_PASSED):
+                level_groups[t.level]["passed"] += 1
+
+        levels = []
+        for lv in (1, 2, 3):
+            info = level_groups.get(lv, {"total": 0, "passed": 0})
+            levels.append({
+                "level": lv,
+                "total": info["total"],
+                "passed": info["passed"],
+                "threshold": compute_level_threshold(info["total"]) if info["total"] > 0 else 0,
+                "is_unlocked": lv <= usp.level_unlocked,
+            })
+
+        topics_data = []
+        for t in topics:
+            passed_statuses = (TopicProgress.Status.PASSED, TopicProgress.Status.ADVANCED_PASSED)
+            topics_data.append({
+                "id": t.id,
+                "title": t.title,
+                "level": t.level,
+                "order": t.order,
+                "content_status": t.content_status,
+                "review_status": t.review_status,
+                "user_progress_status": t.user_progress_status,
+                "is_passed": t.user_progress_status in passed_statuses,
+                "completed_at": t.user_completed_at,
+            })
+
+        return Response({
+            "id": usp.subject_id,
+            "name": usp.subject.name,
+            "status": usp.status,
+            "points": usp.points,
+            "level_unlocked": usp.level_unlocked,
+            "created_at": usp.created_at,
+            "notification_frequency_hours": usp.notification_frequency_hours,
+            "next_due_at": usp.next_due_at,
+            "levels": levels,
+            "topics": topics_data,
         })

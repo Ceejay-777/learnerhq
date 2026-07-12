@@ -138,6 +138,54 @@ class TopicDetailSerializer(serializers.Serializer):
     subject_name = serializers.CharField(help_text="Parent subject name.")
 
 
+class EnrolledSubjectListSerializer(serializers.Serializer):
+    id = serializers.IntegerField(help_text="Subject ID.")
+    name = serializers.CharField(help_text="Subject name.")
+    status = serializers.CharField(help_text="Enrollment status (ACTIVE or COMPLETED).")
+    points = serializers.IntegerField(help_text="Total points earned in this subject.")
+    level_unlocked = serializers.IntegerField(help_text="Highest accessible level (1-3).")
+    topics_total = serializers.IntegerField(help_text="Total topics in the subject roadmap.")
+    topics_passed = serializers.IntegerField(help_text="Topics passed by the user (normal or advanced).")
+    topics_advanced_passed = serializers.IntegerField(help_text="Topics where the advanced quiz was passed.")
+    percent_complete = serializers.IntegerField(help_text="Percentage of topics passed (0-100).")
+    created_at = serializers.DateTimeField(help_text="When the user enrolled.")
+    notification_frequency_hours = serializers.IntegerField(help_text="Notification interval in hours (1-24).")
+    next_due_at = serializers.DateTimeField(allow_null=True, help_text="Next scheduled notification, or null.")
+
+
+class SubjectTopicProgressSerializer(serializers.Serializer):
+    id = serializers.IntegerField(help_text="Topic ID.")
+    title = serializers.CharField(help_text="Topic title.")
+    level = serializers.IntegerField(help_text="Difficulty level (1-3).")
+    order = serializers.IntegerField(help_text="Order within the roadmap.")
+    content_status = serializers.CharField(help_text="Content generation status.")
+    review_status = serializers.CharField(help_text="Content review status.")
+    user_progress_status = serializers.CharField(allow_null=True, help_text="User's progress on this topic, or null if not started.")
+    is_passed = serializers.BooleanField(help_text="Whether the user has passed this topic.")
+    completed_at = serializers.DateTimeField(allow_null=True, help_text="When the user completed this topic, or null.")
+
+
+class SubjectDetailLevelSerializer(serializers.Serializer):
+    level = serializers.IntegerField(help_text="Level number (1-3).")
+    total = serializers.IntegerField(help_text="Number of topics in this level.")
+    passed = serializers.IntegerField(help_text="Number of topics the user passed in this level.")
+    threshold = serializers.IntegerField(help_text="Number of topics needed to advance (80% of total).")
+    is_unlocked = serializers.BooleanField(help_text="Whether this level is accessible to the user.")
+
+
+class SubjectDetailSerializer(serializers.Serializer):
+    id = serializers.IntegerField(help_text="Subject ID.")
+    name = serializers.CharField(help_text="Subject name.")
+    status = serializers.CharField(help_text="Enrollment status.")
+    points = serializers.IntegerField(help_text="Total points earned.")
+    level_unlocked = serializers.IntegerField(help_text="Highest accessible level.")
+    created_at = serializers.DateTimeField(help_text="When the user enrolled.")
+    notification_frequency_hours = serializers.IntegerField(help_text="Notification interval in hours.")
+    next_due_at = serializers.DateTimeField(allow_null=True, help_text="Next scheduled notification, or null.")
+    levels = SubjectDetailLevelSerializer(many=True, help_text="Per-level progress rollups.")
+    topics = SubjectTopicProgressSerializer(many=True, help_text="Full topic roadmap with per-user progress.")
+
+
 class ResourceLinksViewedResponseSerializer(serializers.Serializer):
     status = serializers.CharField(help_text="Current topic progress status.")
     resource_links_viewed_at = serializers.DateTimeField(

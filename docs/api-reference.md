@@ -381,6 +381,88 @@ Response 404:
 
 ---
 
+### `GET /api/learning/subjects`
+
+List all subjects the current user is enrolled in, with progress aggregations.
+Returns only subjects the user has been added to (not just explored or marked as interested).
+Ordered by most recently enrolled first.
+
+```
+Response 200:
+[
+  {
+    "id":                          int,
+    "name":                        string,
+    "status":                      string,   // "ACTIVE" | "COMPLETED"
+    "points":                      int,      // total points earned in this subject
+    "level_unlocked":              int,      // highest level the user can access (1-3)
+    "topics_total":                int,      // total topics in the subject's roadmap
+    "topics_passed":               int,      // topics the user has passed (normal + advanced)
+    "topics_advanced_passed":      int,      // subset of topics_passed with advanced passed
+    "percent_complete":            int,      // 0-100, (topics_passed / topics_total) * 100
+    "created_at":                  string,   // ISO 8601, when the user enrolled
+    "notification_frequency_hours": int,     // 1-24
+    "next_due_at":                 string | null
+  },
+  ...
+]
+```
+
+---
+
+### `GET /api/learning/subjects/<subject_id>`
+
+Full subject detail for an enrolled subject: metadata, per-level progress
+rollups, and the complete topic roadmap with per-topic user status. Topic
+content (summary, resource links) is NOT included — call
+`GET /api/learning/topics/<topic_id>` separately when the user opens a topic.
+
+Returns 404 if the user is not enrolled in this subject or the subject does not exist.
+
+```
+Response 200:
+{
+  "id":                          int,
+  "name":                        string,
+  "status":                      string,   // "ACTIVE" | "COMPLETED"
+  "points":                      int,
+  "level_unlocked":              int,      // 1-3
+  "created_at":                  string,   // ISO 8601
+  "notification_frequency_hours": int,     // 1-24
+  "next_due_at":                 string | null,
+  "levels": [
+    {
+      "level":       int,        // 1, 2, or 3
+      "total":       int,        // topics in this level
+      "passed":      int,        // topics the user has passed in this level
+      "threshold":   int,        // 80% of total (or total-1 for small levels)
+      "is_unlocked": boolean     // true if user's level_unlocked >= this level
+    }
+  ],
+  "topics": [
+    {
+      "id":                  int,
+      "title":               string,
+      "level":               int,
+      "order":               int,
+      "content_status":      string,        // "NOT_GENERATED" | "GENERATING" | "READY" | "FAILED"
+      "review_status":       string,        // "PENDING" | "PASSED" | "FAILED" | "FLAGGED"
+      "user_progress_status": string | null, // null if user hasn't started this topic
+      "is_passed":           boolean,
+      "completed_at":        string | null
+    }
+  ]
+}
+
+Response 404:
+{
+  "detail": "Not found.",
+  "status": "error"
+}
+```
+
+---
+
 ### `GET /api/learning/leaderboard`
 
 Global leaderboard — top 50 users by total accumulated points across all subjects.
@@ -536,5 +618,34 @@ Response 200:
 {
   "status":                  string,   // current topic progress status (e.g. "NOT_STARTED", "PASSED")
   "resource_links_viewed_at": string | null  // ISO 8601 timestamp, null if not yet viewed
+}
+```
+
+---
+
+### `GET /api/learning/topics/<topic_id>`
+
+Get a topic's metadata and generated content. Use this when the user opens
+a topic to read the summary and access resource links before taking quizzes.
+
+```
+Response 200:
+{
+  "id":              int,
+  "title":           string,
+  "summary":         string,   // AI-generated educational content (empty if not yet generated)
+  "resource_links":  [
+    {
+      "url":   string,
+      "type":  string,   // "wikipedia" | "video" | "article"
+      "title": string
+    }
+  ],
+  "level":           int,
+  "order":           int,
+  "content_status":  string,   // "NOT_GENERATED" | "GENERATING" | "READY" | "FAILED"
+  "review_status":   string,   // "PENDING" | "PASSED" | "FAILED" | "FLAGGED"
+  "subject_id":      int,
+  "subject_name":    string
 }
 ```

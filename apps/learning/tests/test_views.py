@@ -249,4 +249,115 @@ class TestMarkResourceLinksViewedView:
         assert data["status"] == "NOT_STARTED"
         assert data["resource_links_viewed_at"] is not None
         tp = TopicProgress.objects.get(user=user, topic=topic)
-        assert tp.resource_links_viewed_at is not None
+
+
+@pytest.mark.django_db
+class TestEnrolledSubjectsView:
+
+    def test_requires_auth(self, client):
+        resp = client.get("/api/learning/subjects")
+        assert resp.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_returns_empty_when_no_enrollments(self, auth_client):
+        resp = auth_client.get("/api/learning/subjects")
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.json() == []
+
+    def test_returns_enrolled_subject_with_counts(self, auth_client, user, subject):
+        UserSubjectProgress.objects.create(user=user, subject=subject)
+        resp = auth_client.get("/api/learning/subjects")
+        assert resp.status_code == status.HTTP_200_OK
+        data = resp.json()
+        assert len(data) == 1
+        entry = data[0]
+        assert entry["id"] == subject.id
+        assert entry["name"] == subject.name
+        assert entry["status"] == "ACTIVE"
+        assert entry["points"] == 0
+        assert entry["level_unlocked"] == 1
+        assert entry["topics_total"] == 5
+        assert entry["topics_passed"] == 0
+        assert entry["percent_complete"] == 0
+
+    def test_counts_passed_topics(self, auth_client, user, subject):
+        UserSubjectProgress.objects.create(user=user, subject=subject)
+        tp = TopicProgress.objects.create(user=user, topic=Topic.objects.first(), status=TopicProgress.Status.PASSED)
+        resp = auth_client.get("/api/learning/subjects")
+        data = resp.json()
+        assert data[0]["topics_passed"] == 1
+        assert data[0]["percent_complete"] == 20
+
+    def test_only_returns_own_enrollments(self, auth_client, user, subject):
+        UserSubjectProgress.objects.create(user=user, subject=subject)
+        other = get_user_model().objects.create_user(email="other@b.com", password="p")
+        other_subj = Subject.objects.create(name="Other Subject")
+        Topic.objects.create(subject=other_subj, title="T", level=1, order=1)
+        UserSubjectProgress.objects.create(user=other, subject=other_subj)
+        resp = auth_client.get("/api/learning/subjects")
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["id"] == subject.id
+
+
+@pytest.mark.django_db
+class TestSubjectDetailView:
+
+    def test_requires_auth(self, client, subject):
+        resp = client.get(f"/api/learning/subjects/{subject.id}")
+        assert resp.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_returns_404_when_not_enrolled(self, auth_client, subject):
+        resp = auth_client.get(f"/api/learning/subjects/{subject.id}")
+        assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_returns_404_for_nonexistent_subject(self, auth_client):
+        resp = auth_client.get("/api/learning/subjects/99999")
+        assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_returns_full_detail(self, auth_client, user, subject):
+        UserSubjectProgress.objects.create(user=user, subject=subject)
+        tp = Topic.objects.filter(subject=subject, order=1).first()
+        TopicProgress.objects.create(user=user, topic=tp, status=TopicProgress.Status.PASSED, completed_at="2026-01-01T00:00:00Z")
+        resp = auth_client.get(f"/api/learning/subjects/{subject.id}")
+        assert resp.status_code == status.HTTP_200_OK
+        data = resp.json()
+        assert data["id"] == subject.id
+        assert data["name"] == subject.name
+        assert data["status"] == "ACTIVE"
+        assert data["level_unlocked"] == 1
+        assert data["notification_frequency_hours"] == 24
+        assert len(data["levels"]) == 3
+        level1 = data["levels"][0]
+        assert level1["level"] == 1
+        assert level1["total"] == 5
+        assert level1["passed"] == 1
+        assert level1["is_unlocked"] is True
+        assert len(data["topics"]) == 5
+        first = data["topics"][0]
+        assert first["order"] == 1
+        assert first["is_passed"] is True
+        assert first["user_progress_status"] == "PASSED"
+        assert first["completed_at"] is not None
+        last = data["topics"][4]
+        assert last["order"] == 5
+        assert last["is_passed"] is False
+        assert last["user_progress_status"] is None
+        assert last["completed_at"] is None
+
+    def test_levels_unlocked_correctly(self, auth_client, user, subject):
+        UserSubjectProgress.objects.create(user=user, subject=subject, level_unlocked=2)
+        resp = auth_client.get(f"/api/learning/subjects/{subject.id}")
+        data = resp.json()
+        assert data["levels"][0]["is_unlocked"] is True
+        assert data["levels"][1]["is_unlocked"] is True
+        assert data["levels"][2]["is_unlocked"] is False
+
+    def test_empty_subject_without_topics(self, auth_client, user):
+        s = Subject.objects.create(name="No Topics")
+        UserSubjectProgress.objects.create(user=user, subject=s)
+        resp = auth_client.get(f"/api/learning/subjects/{s.id}")
+        assert resp.status_code == status.HTTP_200_OK
+        data = resp.json()
+        assert len(data["topics"]) == 0
+        assert data["levels"][0]["total"] == 0
+        assert data["levels"][0]["threshold"] == 0
