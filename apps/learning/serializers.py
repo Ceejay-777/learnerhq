@@ -121,6 +121,10 @@ class SubmitQuizResponseSerializer(serializers.Serializer):
     quiz_type = serializers.CharField(help_text="Type of quiz.")
 
 
+class CreateSubjectSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=200, help_text="Subject name to create or resolve.")
+
+
 class ResourceLinksViewedResponseSerializer(serializers.Serializer):
     status = serializers.CharField(help_text="Current topic progress status.")
     resource_links_viewed_at = serializers.DateTimeField(

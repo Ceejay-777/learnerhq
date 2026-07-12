@@ -3,6 +3,7 @@ from django.urls import path
 from .views import (
     AddSubjectView,
     CheckLevelProgressView,
+    CreateSubjectView,
     ExploreSubjectsView,
     GenerateQuizView,
     LeaderboardView,
@@ -23,6 +24,7 @@ urlpatterns = [
     path("subjects/<int:subject_id>/remove", RemoveSubjectView.as_view(), name="remove-subject"),
     path("subjects/<int:subject_id>/notification-frequency", SetNotificationFrequencyView.as_view(), name="set-notification-frequency"),
     path("subjects/<int:subject_id>/notification-status", NotificationStatusView.as_view(), name="notification-status"),
+    path("subjects/create", CreateSubjectView.as_view(), name="create-subject"),
     path("subjects/suggestions", SubjectSuggestionsView.as_view(), name="subject-suggestions"),
     path("explore", ExploreSubjectsView.as_view(), name="explore"),
     path("explore/<int:subject_id>/interest", MarkInterestView.as_view(), name="mark-interest"),

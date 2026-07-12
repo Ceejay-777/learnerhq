@@ -12,7 +12,7 @@ class Subject(models.Model):
     status = models.CharField(
         max_length=16, choices=Status.choices, default=Status.ACTIVE
     )
-    embedding = HalfVectorField(dimensions=768, null=True, blank=True)
+    embedding = HalfVectorField(dimensions=3072, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

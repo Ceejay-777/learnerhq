@@ -6,6 +6,7 @@ from rest_framework.response import Response
 
 from .models import Subject, Topic, UserSubjectProgress
 from .serializers import (
+    CreateSubjectSerializer,
     ExploreSubjectSerializer,
     GenerateQuizRequestSerializer,
     GenerateQuizResponseSerializer,
@@ -23,6 +24,7 @@ from .serializers import (
 from .services import (
     _generate_subject_suggestions,
     add_subject_to_user,
+    canonicalize_subject,
     check_level_progress,
     explore_subjects,
     generate_quiz,
@@ -301,3 +303,45 @@ class MarkResourceLinksViewedView(GenericAPIView):
             "status": tp.status,
             "resource_links_viewed_at": tp.resource_links_viewed_at,
         })
+
+
+class CreateSubjectView(GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = CreateSubjectSerializer
+
+    @extend_schema(
+        tags=["Learning"],
+        summary="Create or resolve a subject by name",
+        request=CreateSubjectSerializer,
+        responses={200: None, 201: None, 300: None, 400: None},
+    )
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        name = serializer.validated_data["name"].strip()
+        if not name:
+            return Response({"detail": "Name is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        result = canonicalize_subject(name)
+
+        if result.action == "narrow":
+            return Response(
+                {"data": {"action": "narrow", "suggestion": result.suggestion}, "status": "success"},
+                status=status.HTTP_300_MULTIPLE_CHOICES,
+            )
+
+        try:
+            add_subject_to_user(request.user, result.subject)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                "data": {
+                    "action": "resolved",
+                    "subject": {"id": result.subject.id, "name": result.subject.name},
+                },
+                "status": "success",
+            },
+            status=status.HTTP_200_OK,
+        )

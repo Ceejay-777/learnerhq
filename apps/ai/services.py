@@ -21,7 +21,7 @@ def generate_embedding(text: str) -> list[float]:
     try:
         import google.generativeai as genai
         genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-        result = genai.embed_content(model="models/text-embedding-004", content=text)
+        result = genai.embed_content(model="models/gemini-embedding-001", content=text)
         return result["embedding"]
     except Exception as e:
         raise ProviderError(str(e), provider="gemini") from e
@@ -36,7 +36,7 @@ def generate_content(
         import google.generativeai as genai
         genai.configure(api_key=os.environ["GEMINI_API_KEY"])
         model = genai.GenerativeModel(
-            model_name="models/gemini-2.5-flash",
+            model_name="models/gemini-2.0-flash",
             system_instruction=system_instruction,
         )
         schema_hint = (
@@ -78,6 +78,18 @@ def review_content(
         raise ProviderError(str(e), provider="groq") from e
 
 
+RESOLVE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "action": {"type": "string", "enum": ["resolve", "create", "narrow"]},
+        "subject_id": {"type": "integer", "description": "ID of the matched subject (only for resolve action)"},
+        "canonical_name": {"type": "string", "description": "Canonical name for a new subject (only for create action)"},
+        "suggestion": {"type": "string", "description": "Suggestion to narrow the query (only for narrow action)"},
+    },
+    "required": ["action"],
+}
+
+
 def rank_or_resolve(
     input_text: str,
     candidates: list[dict[str, Any]],
@@ -91,7 +103,7 @@ def rank_or_resolve(
         )
         if instruction:
             prompt = f"{instruction}\n\n{prompt}"
-        prompt += "\n\nRespond with JSON: {\"action\": \"resolve\" | \"create\" | \"narrow\", ...}"
+        prompt += f"\n\nRespond with valid JSON matching this schema: {json.dumps(RESOLVE_SCHEMA)}"
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
