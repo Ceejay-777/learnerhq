@@ -858,6 +858,7 @@ def generate_quiz(
     quiz_type: str,
     prior_missed_questions: list[str] | None = None,
 ) -> QuizAttempt:
+    quiz_type = quiz_type.upper()
     tp, _ = TopicProgress.objects.get_or_create(user=user, topic=topic)
 
     if quiz_type == QuizAttempt.QuizType.ADVANCED:
