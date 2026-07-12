@@ -1,0 +1,43 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 1s
+      retries: 10
+
+  web:
+    build: .
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes: [".:/app"]
+    environment: &django_env
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DATABASE_URL: ${DATABASE_URL}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      BREVO_API_KEY: ${BREVO_API_KEY}
+    ports: ["8000:8000"]
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: celery -A config worker -l info --concurrency=2
+    volumes: [".:/app"]
+    environment: *django_env
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  beat:
+    build: .
+    command: celery -A config beat -l info
+    volumes: [".:/app"]
+    environment: *django_env
+    depends_on:
+      redis:
+        condition: service_healthy

@@ -42,17 +42,17 @@ class TestProfile:
         client.force_authenticate(user=user)
 
         response = client.patch('/api/auth/profile', {
-            'leaderboard_visible': False,
+            'preferences': {'leaderboard_visible': False},
         }, format='json')
         assert response.status_code == status.HTTP_200_OK
-        user.refresh_from_db()
-        assert user.leaderboard_visible is False
-        assert user.others_learning_visible is True
+        user.preferences.refresh_from_db()
+        assert user.preferences.leaderboard_visible is False
+        assert user.preferences.others_learning_visible is True
 
         response = client.patch('/api/auth/profile', {
-            'others_learning_visible': False,
+            'preferences': {'others_learning_visible': False},
         }, format='json')
         assert response.status_code == status.HTTP_200_OK
-        user.refresh_from_db()
-        assert user.leaderboard_visible is False
-        assert user.others_learning_visible is False
+        user.preferences.refresh_from_db()
+        assert user.preferences.leaderboard_visible is False
+        assert user.preferences.others_learning_visible is False

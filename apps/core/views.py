@@ -14,6 +14,7 @@ from .serializers import (
     PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer,
     UserProfileSerializer,
+    PreferencesUpdateSerializer,
 )
 from .services import create_user, create_password_reset_token, set_password_with_token
 
@@ -67,7 +68,16 @@ class SignUpView(GenericAPIView):
     def post(self, request):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = create_user(**serializer.validated_data)
+        validated = dict(serializer.validated_data)
+        auto_select = validated.pop('auto_select_subjects_enabled', False)
+        user = create_user(**validated)
+        if auto_select:
+            from django.utils import timezone
+            from apps.core.models import UserPreferences
+            UserPreferences.objects.filter(user=user).update(
+                auto_select_subjects_enabled=True,
+                auto_select_subjects_consent_at=timezone.now(),
+            )
         response = Response(
             {"data": UserProfileSerializer(user).data, "status": "success"},
             status=status.HTTP_201_CREATED,
@@ -218,9 +228,23 @@ class RetrieveUpdateProfileView(GenericAPIView):
         responses={200: UserProfileDataSerializer},
     )
     def patch(self, request):
+        prefs_data = request.data.pop('preferences', None)
         serializer = self.get_serializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         for attr, value in serializer.validated_data.items():
             setattr(request.user, attr, value)
         request.user.save(update_fields=list(serializer.validated_data.keys()))
+
+        if prefs_data:
+            prefs_serializer = PreferencesUpdateSerializer(
+                request.user.preferences, data=prefs_data, partial=True,
+            )
+            prefs_serializer.is_valid(raise_exception=True)
+            if prefs_serializer.validated_data.get('auto_select_subjects_enabled'):
+                from django.utils import timezone
+                prefs_serializer.validated_data['auto_select_subjects_consent_at'] = timezone.now()
+            for attr, value in prefs_serializer.validated_data.items():
+                setattr(request.user.preferences, attr, value)
+            request.user.preferences.save(update_fields=list(prefs_serializer.validated_data.keys()))
+
         return Response({"data": self.get_serializer(request.user).data, "status": "success"})

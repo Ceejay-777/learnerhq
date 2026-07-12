@@ -63,6 +63,7 @@ celery -A config beat -l info        # separate terminal
 - Endpoints import `services` functions directly by name; no service class abstraction.
 - Task functions in `apps/*/tasks.py` use deferred imports inside the function body.
 - Database-level `unique_together` enforced at model layer (no soft uniqueness checks).
+- **Execution branches must use structural type checks, never fragile heuristics.** Use `isinstance` against typed exception classes (e.g. `groq.RateLimitError`), typed return values, `getattr(obj, 'status_code')` on protocol-compliant objects, or explicit `is not None` — never `str(e)` substring matches or duck-typing by message content. If you're checking what error happened, use the class, not its string representation.
 
 ## Build references (historical)
 

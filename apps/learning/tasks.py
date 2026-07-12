@@ -1,23 +1,47 @@
+import sentry_sdk
 from celery import shared_task
 from django.db import models
 from django.utils import timezone
 from datetime import timedelta
 
+from apps.ai.exceptions import ProviderError
 
-@shared_task(name='learning.generate_content_for_topic')
-def generate_content_for_topic(topic_id: int) -> None:
+
+@shared_task(
+    bind=True,
+    name='learning.generate_content_for_topic',
+    autoretry_for=(ProviderError,),
+    retry_backoff=True,
+    retry_backoff_max=300,
+    retry_jitter=True,
+    max_retries=3,
+)
+def generate_content_for_topic(self, topic_id: int) -> None:
     from .models import Topic
     from .services import ensure_topic_content_ready, generate_topic_content
-    from apps.ai.exceptions import ProviderError
 
     if not ensure_topic_content_ready(topic_id):
         return
 
     try:
         generate_topic_content(topic_id)
-    except ProviderError:
-        raise
+    except ProviderError as e:
+        if e.recoverable:
+            raise
+        sentry_sdk.capture_message(
+            f"Topic {topic_id}: content generation failed (non-recoverable)",
+            level="error",
+        )
+        Topic.objects.filter(id=topic_id).update(
+            content_status=Topic.ContentStatus.FAILED,
+            review_status=Topic.ReviewStatus.FLAGGED,
+        )
+        return
     except Exception:
+        sentry_sdk.capture_message(
+            f"Topic {topic_id}: content generation permanently failed",
+            level="error",
+        )
         Topic.objects.filter(id=topic_id).update(
             content_status=Topic.ContentStatus.FAILED,
             review_status=Topic.ReviewStatus.FLAGGED,
@@ -27,8 +51,16 @@ def generate_content_for_topic(topic_id: int) -> None:
     review_content_for_topic.delay(topic_id)
 
 
-@shared_task(name='learning.review_content_for_topic')
-def review_content_for_topic(topic_id: int) -> None:
+@shared_task(
+    bind=True,
+    name='learning.review_content_for_topic',
+    autoretry_for=(ProviderError,),
+    retry_backoff=True,
+    retry_backoff_max=300,
+    retry_jitter=True,
+    max_retries=3,
+)
+def review_content_for_topic(self, topic_id: int) -> None:
     from .models import Topic
     from .services import review_topic_content
 
@@ -36,8 +68,18 @@ def review_content_for_topic(topic_id: int) -> None:
 
     try:
         passed = review_topic_content(topic_id)
-    except Exception:
-        raise
+    except ProviderError as e:
+        if e.recoverable:
+            raise
+        sentry_sdk.capture_message(
+            f"Topic {topic_id}: review failed (non-recoverable)",
+            level="error",
+        )
+        Topic.objects.filter(id=topic_id).update(
+            content_status=Topic.ContentStatus.FAILED,
+            review_status=Topic.ReviewStatus.FLAGGED,
+        )
+        return
 
     if passed:
         Topic.objects.filter(id=topic_id).update(
@@ -58,6 +100,10 @@ def review_content_for_topic(topic_id: int) -> None:
         )
         generate_content_for_topic.delay(topic_id)
     else:
+        sentry_sdk.capture_message(
+            f"Topic {topic_id}: all review attempts exhausted",
+            level="error",
+        )
         Topic.objects.filter(id=topic_id).update(
             content_status=Topic.ContentStatus.FAILED,
             review_status=Topic.ReviewStatus.FLAGGED,
@@ -150,22 +196,31 @@ def cleanup_stuck_generations() -> None:
 
 @shared_task(name='learning.auto_select_subjects')
 def auto_select_subjects() -> None:
+    from django.contrib.auth import get_user_model
+    from django.db.models import Q
     from .models import Subject, UserSubjectProgress
     from .services import _generate_subject_suggestions, add_subject_to_user
 
     cutoff = timezone.now() - timedelta(hours=24)
-    pending = UserSubjectProgress.objects.filter(
-        needs_subject_selection=True,
-        selection_pending_since__lt=cutoff,
-    )
-    for usp in pending:
-        suggestions = _generate_subject_suggestions(usp.user)
+    User = get_user_model()
+
+    opted_in_users = User.objects.filter(
+        preferences__auto_select_subjects_enabled=True,
+    ).filter(
+        Q(last_login__lt=cutoff) | Q(last_login__isnull=True, date_joined__lt=cutoff),
+    ).exclude(
+        subject_progress__status=UserSubjectProgress.Status.ACTIVE,
+    ).distinct()
+
+    for user in opted_in_users:
+        suggestions = _generate_subject_suggestions(user)
         if not suggestions:
             continue
         top = Subject.objects.get(id=suggestions[0]["id"])
         try:
-            add_subject_to_user(usp.user, top)
+            add_subject_to_user(user, top)
         except ValueError:
             continue
-        usp.needs_subject_selection = False
-        usp.save(update_fields=["needs_subject_selection"])
+        UserSubjectProgress.objects.filter(
+            user=user, needs_subject_selection=True,
+        ).update(needs_subject_selection=False, selection_pending_since=None)

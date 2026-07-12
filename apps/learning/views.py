@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from .models import Subject, Topic, UserSubjectProgress
+from apps.ai.exceptions import ProviderError
 from .serializers import (
     CreateSubjectSerializer,
     ExploreSubjectSerializer,
@@ -24,7 +25,7 @@ from .serializers import (
 from .services import (
     _generate_subject_suggestions,
     add_subject_to_user,
-    canonicalize_subject,
+    resolve_or_create_subject,
     check_level_progress,
     explore_subjects,
     generate_quiz,
@@ -252,6 +253,11 @@ class GenerateQuizView(GenericAPIView):
             attempt = generate_quiz(request.user, topic, quiz_type, prior_missed_questions)
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except ProviderError as e:
+            return Response(
+                {"detail": "The AI service is temporarily unavailable. Please try again shortly."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         return Response({
             "id": attempt.id,
             "quiz_type": attempt.quiz_type,
@@ -322,7 +328,7 @@ class CreateSubjectView(GenericAPIView):
         if not name:
             return Response({"detail": "Name is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        result = canonicalize_subject(name)
+        result = resolve_or_create_subject(name)
 
         if result.action == "narrow":
             return Response(

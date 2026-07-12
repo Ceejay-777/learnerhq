@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import MagicMock
 from django.contrib.auth import get_user_model
 from apps.learning.models import Subject, Topic
 
@@ -472,3 +473,107 @@ class TestAIReviewContent:
         mock_groq_class.side_effect = Exception("API down")
         with pytest.raises(ProviderError, match="API down"):
             review_content("Some content")
+
+
+@pytest.mark.django_db
+class TestAIGenerateContent:
+
+    @mock_patch.dict("os.environ", {"GROQ_API_KEY": "test-key"})
+    @mock_patch("groq.Groq")
+    def test_generate_calls_groq_and_returns_dict(self, mock_groq_class):
+        from apps.ai.services import generate_content
+        mock_client = mock_groq_class.return_value
+        mock_client.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(
+                content='{"topics": [{"title": "Test", "level": 1, "description": "Desc"}]}'
+            ))]
+        )
+        result = generate_content("prompt", output_schema={"type": "object"})
+        assert "topics" in result
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["response_format"] == {"type": "json_object"}
+        assert call_kwargs["model"] == "llama-3.3-70b-versatile"
+
+    @mock_patch.dict("os.environ", {"GROQ_API_KEY": "test-key"})
+    @mock_patch("groq.Groq")
+    def test_generate_uses_system_instruction(self, mock_groq_class):
+        from apps.ai.services import generate_content
+        mock_client = mock_groq_class.return_value
+        mock_client.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content='{"x": 1}'))]
+        )
+        generate_content("user prompt", system_instruction="be helpful")
+        messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
+        assert messages[0] == {"role": "system", "content": "be helpful"}
+        assert messages[1]["role"] == "user"
+        assert "user prompt" in messages[1]["content"]
+
+    @mock_patch.dict("os.environ", {"GROQ_API_KEY": "test-key"})
+    @mock_patch("groq.Groq")
+    def test_generate_raises_provider_error_on_api_failure(self, mock_groq_class):
+        from apps.ai.exceptions import ProviderError
+        from apps.ai.services import generate_content
+        mock_groq_class.side_effect = Exception("rate limited")
+        with pytest.raises(ProviderError, match="rate limited"):
+            generate_content("prompt")
+
+    @mock_patch.dict("os.environ", {"GROQ_API_KEY": "test-key"})
+    @mock_patch("groq.Groq")
+    def test_standardize_subject_name_calls_generate_content(self, mock_groq_class):
+        from apps.ai.services import standardize_subject_name
+        mock_client = mock_groq_class.return_value
+        mock_client.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(
+                content='{"standardized_name": "World War II", "is_specific": true}'
+            ))]
+        )
+        result = standardize_subject_name("ww2")
+        assert result["standardized_name"] == "World War II"
+        assert result["is_specific"] is True
+
+    @mock_patch.dict("os.environ", {"GROQ_API_KEY": "test-key"})
+    @mock_patch("groq.Groq")
+    def test_standardize_subject_name_flags_broad_input(self, mock_groq_class):
+        from apps.ai.services import standardize_subject_name
+        mock_client = mock_groq_class.return_value
+        mock_client.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(
+                content='{"standardized_name": "History", "is_specific": false, '
+                       '"suggestion": "Try: World War II, French Revolution"}'
+            ))]
+        )
+        result = standardize_subject_name("History")
+        assert result["is_specific"] is False
+        assert "suggestion" in result
+        assert "World War II" in result["suggestion"]
+
+
+class TestIsRetryableError:
+    """Locks the contract: only specific SDK exception classes are retryable."""
+
+    @staticmethod
+    def _mock_response():
+        from unittest.mock import MagicMock
+        return MagicMock(request=MagicMock())
+
+    def test_retryable_exceptions(self):
+        from groq import RateLimitError, InternalServerError, APIConnectionError, APITimeoutError
+        from apps.ai.services import _is_retryable_error
+        resp = self._mock_response()
+        req = MagicMock()
+        assert _is_retryable_error(RateLimitError("429", response=resp, body=None))
+        assert _is_retryable_error(InternalServerError("500", response=resp, body=None))
+        assert _is_retryable_error(APIConnectionError(message="lost", request=req))
+        assert _is_retryable_error(APITimeoutError(request=req))
+
+    def test_non_retryable_exceptions(self):
+        from groq import BadRequestError, AuthenticationError
+        from apps.ai.services import _is_retryable_error
+        resp = self._mock_response()
+        assert not _is_retryable_error(BadRequestError("400", response=resp, body=None))
+        assert not _is_retryable_error(AuthenticationError("401", response=resp, body=None))
+
+    def test_plain_exception_not_retryable(self):
+        from apps.ai.services import _is_retryable_error
+        assert not _is_retryable_error(ValueError("something broke"))
+        assert not _is_retryable_error(Exception("rate limit exceeded"))

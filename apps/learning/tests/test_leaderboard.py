@@ -84,8 +84,8 @@ class TestGlobalLeaderboard:
         UserSubjectProgress.objects.create(user=user_b, subject=subject, points=100)
         UserSubjectProgress.objects.create(user=user_c, subject=subject, points=50)
 
-        user.leaderboard_visible = False
-        user.save()
+        user.preferences.leaderboard_visible = False
+        user.preferences.save(update_fields=['leaderboard_visible'])
 
         result = global_leaderboard()
         assert len(result) == 2
@@ -99,8 +99,8 @@ class TestGlobalLeaderboard:
         assert result[1]["total_points"] == 50
 
     def test_hidden_user_not_in_list(self, user):
-        user.leaderboard_visible = False
-        user.save()
+        user.preferences.leaderboard_visible = False
+        user.preferences.save(update_fields=['leaderboard_visible'])
         subject = Subject.objects.create(name="Math")
         UserSubjectProgress.objects.create(user=user, subject=subject, points=100)
 
@@ -174,8 +174,8 @@ class TestTopicLeaderboard:
         TopicProgress.objects.create(user=user_b, topic=topic, points=100)
         TopicProgress.objects.create(user=user_c, topic=topic, points=50)
 
-        user.leaderboard_visible = False
-        user.save()
+        user.preferences.leaderboard_visible = False
+        user.preferences.save(update_fields=['leaderboard_visible'])
 
         result = topic_leaderboard(topic.id)
         assert len(result) == 2
@@ -185,8 +185,8 @@ class TestTopicLeaderboard:
         assert result[1]["rank"] == 3
 
     def test_hidden_user_not_in_list(self, user, topic):
-        user.leaderboard_visible = False
-        user.save()
+        user.preferences.leaderboard_visible = False
+        user.preferences.save(update_fields=['leaderboard_visible'])
         TopicProgress.objects.create(user=user, topic=topic, points=100)
 
         result = topic_leaderboard(topic.id)
@@ -217,8 +217,9 @@ class TestOthersLearning:
     def test_excludes_others_learning_invisible_users(self, user, topic, subject):
         other = User.objects.create_user(
             email="b@b.com", password="p", display_name="Bob",
-            others_learning_visible=False,
         )
+        other.preferences.others_learning_visible = False
+        other.preferences.save(update_fields=['others_learning_visible'])
         UserSubjectProgress.objects.create(user=user, subject=subject)
         UserSubjectProgress.objects.create(user=other, subject=subject, status=UserSubjectProgress.Status.ACTIVE)
         TopicProgress.objects.create(user=other, topic=topic, status=TopicProgress.Status.PASSED)

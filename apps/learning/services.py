@@ -4,12 +4,13 @@ from datetime import timedelta
 from typing import Literal
 
 from django.contrib.auth import get_user_model
-from django.db import connection, models
+from django.db import connection, models, transaction
 from django.db.models import Count, Q, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
-from apps.ai.services import generate_content, generate_embedding, rank_or_resolve
+from apps.ai.services import generate_content, generate_embedding, rank_or_resolve, standardize_subject_name
+from apps.ai.exceptions import ProviderError
 from .exceptions import GenerationError
 from .models import Subject, Topic, TopicProgress, UserInterest, UserSubjectProgress, QuizAttempt
 
@@ -23,7 +24,7 @@ class ResolveResult:
 @dataclass
 class CreateResult:
     action: Literal["create"]
-    canonical_name: str
+    standardized_name: str
 
 
 @dataclass
@@ -47,7 +48,7 @@ def _find_similar_subjects(query_vector: list[float]) -> list[dict]:
 
     similar = Subject.objects.filter(
         embedding__isnull=False,
-    ).alias(
+    ).annotate(
         distance=CosineDistance("embedding", query_vector)
     ).filter(
         distance__lte=0.15
@@ -59,13 +60,27 @@ def _find_similar_subjects(query_vector: list[float]) -> list[dict]:
     ]
 
 
-def canonicalize_subject(raw_input: str) -> ResolveResult | CreateResult | NarrowResult:
+def resolve_or_create_subject(raw_input: str) -> ResolveResult | NarrowResult:
     existing = Subject.objects.filter(name__iexact=raw_input).first()
     if existing is not None:
         return ResolveResult(action="resolve", subject=existing)
 
     query_vector = generate_embedding(raw_input)
     candidates = _find_similar_subjects(query_vector)
+
+    if not candidates:
+        llm_result = standardize_subject_name(raw_input)
+        if not llm_result.get("is_specific", True):
+            return NarrowResult(
+                action="narrow",
+                suggestion=llm_result.get("suggestion", "Please be more specific."),
+            )
+        standardized_name = llm_result["standardized_name"]
+        with transaction.atomic():
+            subject = Subject.objects.create(name=standardized_name)
+            _compute_and_store_embedding(subject, standardized_name)
+        return ResolveResult(action="resolve", subject=subject)
+
     result = rank_or_resolve(raw_input, candidates)
     action = result.get("action")
 
@@ -74,9 +89,10 @@ def canonicalize_subject(raw_input: str) -> ResolveResult | CreateResult | Narro
         return ResolveResult(action="resolve", subject=subject)
 
     if action == "create":
-        canonical_name = result["canonical_name"]
-        subject = Subject.objects.create(name=canonical_name)
-        _compute_and_store_embedding(subject, canonical_name)
+        standardized_name = result["standardized_name"]
+        with transaction.atomic():
+            subject = Subject.objects.create(name=standardized_name)
+            _compute_and_store_embedding(subject, standardized_name)
         return ResolveResult(action="resolve", subject=subject)
 
     if action == "narrow":
@@ -84,14 +100,24 @@ def canonicalize_subject(raw_input: str) -> ResolveResult | CreateResult | Narro
 
     raise GenerationError(
         f"Unexpected resolution action: {action}",
-        phase="canonicalization",
+        phase="resolution",
     )
 
 
-ROADMAP_SYSTEM_INSTRUCTION = "You are a curriculum designer creating a structured learning roadmap."
+ROADMAP_SYSTEM_INSTRUCTION = (
+    "You are an expert curriculum designer. You create structured, pedagogically sound "
+    "learning roadmaps that progress from foundational concepts through intermediate skills "
+    "to advanced mastery. Each topic should be scoped to a single sitting and ordered "
+    "so every topic builds on what came before it. Avoid generic placeholder names — "
+    "topics should be concrete and specific to the subject."
+)
 
 TOPIC_CONTENT_SYSTEM_INSTRUCTION = (
-    "You are a content creator writing a short educational summary for a learning platform."
+    "You are an educational content writer creating concise, engaging summaries for a "
+    "self-paced learning platform. Write for a curious adult learner with no prior knowledge "
+    "of the topic. Prioritize clarity and practical understanding over academic formalism. "
+    "Every resource link should point to a real, publicly accessible resource that deepens "
+    "understanding of the specific topic — not generic reference sites."
 )
 
 TOPIC_CONTENT_SCHEMA = {
@@ -162,10 +188,15 @@ def generate_topic_content(topic_id: int) -> None:
     for attempt in range(max_attempts):
         response = generate_content(
             prompt=(
-                f"Write a short educational summary (300-500 words) for the topic "
-                f"'{topic.title}' within the subject '{topic.subject.name}'.\n\n"
-                f"Include 2-5 external resource links (Wikipedia, articles, videos) "
-                f"for further study."
+                f"Write a self-contained educational summary for the topic "
+                f"'{topic.title}' as part of the subject '{topic.subject.name}'.\n\n"
+                f"The summary should be 300-500 words and written for someone encountering "
+                f"this topic for the first time. Focus on the core ideas, key terms, "
+                f"and why this topic matters in the broader subject.\n\n"
+                f"Also provide 2-5 carefully chosen external resource links. Prefer "
+                f"Wikipedia for foundational overviews, reputable articles for depth, "
+                f"and YouTube for visual explanations. Each link must point to a real, "
+                f"accessible resource that is directly relevant to this specific topic."
             ),
             system_instruction=TOPIC_CONTENT_SYSTEM_INSTRUCTION,
             output_schema=TOPIC_CONTENT_SCHEMA,
@@ -260,13 +291,18 @@ def _validate_roadmap_response(data: dict) -> list[dict]:
 
 def generate_roadmap(subject: Subject, max_retries: int = 1) -> list[Topic]:
     prompt = (
-        f"Create a structured learning roadmap for the subject: '{subject.name}'.\n\n"
-        f"Generate 20-25 topics organized into 3 depth levels:\n"
-        f"- Level 1: Foundational concepts (first ~7-8 topics)\n"
-        f"- Level 2: Intermediate concepts (next ~7-8 topics)\n"
-        f"- Level 3: Advanced concepts (final ~6-9 topics)\n\n"
-        f"Topics within each level should flow logically. Return a JSON array of objects, "
-        f"each with: title (string), level (1-3), description (one sentence)."
+        f"Design a 20-25 topic learning roadmap for the subject '{subject.name}'.\n\n"
+        f"Structure it across 3 levels of depth:\n"
+        f"  Level 1 (7-8 topics): Core foundations every beginner needs. "
+        f"Start with the basics and build toward intermediate ground.\n"
+        f"  Level 2 (7-8 topics): Deeper dives and practical application. "
+        f"Assume the learner has completed Level 1.\n"
+        f"  Level 3 (6-9 topics): Advanced concepts, edge cases, and current developments. "
+        f"Push the learner toward mastery.\n\n"
+        f"For each topic provide a title (concrete, 3-7 words), a level (1/2/3), "
+        f"and a one-sentence description of what the learner will understand after completing it.\n\n"
+        f"IMPORTANT: The full 20-25 topic sequence must be logically ordered — each topic "
+        f"should build on concepts introduced in earlier topics."
     )
     for attempt in range(max_retries + 1):
         response = generate_content(
@@ -515,7 +551,7 @@ def add_subject_to_user(user, subject) -> UserSubjectProgress:
         return existing
 
     if get_available_slots(user) == 0:
-        raise ValueError("User is at capacity (5 active subjects)")
+        raise ValueError("You've reached the limit of 5 active subjects. Remove one or complete a subject to add a new one.")
 
     if not Topic.objects.filter(subject=subject).exists():
         generate_roadmap(subject)
@@ -583,8 +619,12 @@ def check_needs_selection(user) -> dict | None:
 
 
 QUIZ_SYSTEM_INSTRUCTION = (
-    "You are an educational quiz creator generating multiple-choice questions "
-    "for a learning platform."
+    "You are an educational assessment designer creating multiple-choice quiz questions. "
+    "Your questions test genuine understanding, not rote memorization. "
+    "Every question should require the learner to apply, analyze, or evaluate — "
+    "not just recall a fact. All four options must be plausible to someone who "
+    "hasn't studied the material. Distractors should reflect common misconceptions. "
+    "Explanations should teach, not just identify the right answer."
 )
 
 QUIZ_QUESTION_ITEM = {
@@ -691,7 +731,7 @@ def _next_attempt_number(user, topic, quiz_type: str) -> int:
 def global_leaderboard(limit=50):
     User = get_user_model()
 
-    all_users = User.objects.annotate(
+    all_users = User.objects.select_related("preferences").annotate(
         total_points=Coalesce(
             Sum("subject_progress__points"), Value(0)
         ),
@@ -699,7 +739,7 @@ def global_leaderboard(limit=50):
 
     result = []
     for rank, user in enumerate(all_users, 1):
-        if user.leaderboard_visible:
+        if user.preferences.leaderboard_visible:
             result.append({
                 "rank": rank,
                 "user_id": user.id,
@@ -715,11 +755,11 @@ def global_leaderboard(limit=50):
 def topic_leaderboard(topic_id, limit=20):
     progress_qs = TopicProgress.objects.filter(
         topic_id=topic_id, points__gt=0,
-    ).select_related("user").order_by("-points", "user_id")
+    ).select_related("user__preferences").order_by("-points", "user_id")
 
     result = []
     for rank, tp in enumerate(progress_qs, 1):
-        if tp.user.leaderboard_visible:
+        if tp.user.preferences.leaderboard_visible:
             result.append({
                 "rank": rank,
                 "user_id": tp.user_id,
@@ -744,7 +784,7 @@ def others_learning(topic_id, viewing_user, limit=10):
     ).exclude(
         user=viewing_user,
     ).select_related("user").filter(
-        user__others_learning_visible=True,
+        user__preferences__others_learning_visible=True,
     )
 
     entries = []
@@ -851,14 +891,16 @@ def generate_quiz(
         )
 
     prompt = (
-        f"Generate a {quiz_type.lower()} quiz for the topic '{topic.title}' "
-        f"within the subject '{topic.subject.name}'.\n\n"
-        f"Topic summary for context:\n{topic.summary}\n\n"
-        f"Each question must have 4 multiple-choice options (a/b/c/d), "
-        f"the index of the correct option (0-3), and a brief explanation of why "
-        f"the correct answer is right.\n"
-        f"Ensure options are plausible and the question genuinely tests understanding, "
-        f"not just recall.\n"
+        f"Create a {quiz_type.lower()} quiz for the topic '{topic.title}' "
+        f"(subject: '{topic.subject.name}').\n\n"
+        f"Reference material:\n{topic.summary}\n\n"
+        f"Question requirements:\n"
+        f"- 4 multiple-choice options per question (labeled a/b/c/d)\n"
+        f"- Provide the index (0-3) of the single correct answer\n"
+        f"- Write a brief explanation of why the correct answer is right and why "
+        f"the distractors are wrong\n"
+        f"- All options must be plausible — distractors should target common misconceptions\n"
+        f"- Questions should test understanding and application, not recall of trivia\n"
         f"{difficulty_note}{missed_context}"
     )
 
@@ -872,7 +914,7 @@ def generate_quiz(
         try:
             validated = _validate_quiz_response(response, quiz_type)
             break
-        except GenerationError:
+        except (GenerationError, ProviderError):
             if attempt >= max_attempts - 1:
                 raise
 

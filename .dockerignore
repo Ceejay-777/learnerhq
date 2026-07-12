@@ -1,0 +1,8 @@
+venv/
+.git/
+__pycache__/
+*.pyc
+.pytest_cache/
+.pytest_cache/
+e2e_results/
+*.md

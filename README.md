@@ -58,7 +58,7 @@ The codebase originated from the opencore community as a large-language-model co
 ## Features
 
 ### Phase 0 — Subject Discovery
-- Users search for subjects; the system canonicalizes via semantic similarity (pgvector + LLM rank/resolve)
+- Users search for subjects; the system resolves subject names via semantic similarity (pgvector + LLM rank/resolve)
 - Explore subjects by popularity with enrollment/interested/completed state per user
 
 ### Phase 1 — Subject Enrollment

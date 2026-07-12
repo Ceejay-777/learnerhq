@@ -1,5 +1,7 @@
 from django.contrib.auth.models import AbstractUser, UserManager as BaseUserManager
 from django.db import models
+from django.dispatch import receiver
+from django.db.models.signals import post_save
 
 
 class UserManager(BaseUserManager):
@@ -29,13 +31,25 @@ class User(AbstractUser):
     display_name = models.CharField(max_length=100, blank=True, default="")
     avatar = models.URLField(blank=True, default="")
     bio = models.TextField(blank=True, default="")
-    leaderboard_visible = models.BooleanField(default=True)
-    others_learning_visible = models.BooleanField(default=True)
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []
 
     objects = UserManager()
+
+
+class UserPreferences(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='preferences')
+    leaderboard_visible = models.BooleanField(default=True)
+    others_learning_visible = models.BooleanField(default=True)
+    auto_select_subjects_enabled = models.BooleanField(default=False)
+    auto_select_subjects_consent_at = models.DateTimeField(null=True, blank=True)
+
+
+@receiver(post_save, sender=User)
+def create_user_preferences(sender, instance, created, **kwargs):
+    if created:
+        UserPreferences.objects.create(user=instance)
 
 
 class PasswordResetToken(models.Model):

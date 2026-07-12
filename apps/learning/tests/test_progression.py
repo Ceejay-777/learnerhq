@@ -206,7 +206,7 @@ class TestSlotManagement:
         for i in range(5):
             s = Subject.objects.create(name=f"S{i}")
             UserSubjectProgress.objects.create(user=user, subject=s)
-        with pytest.raises(ValueError, match="at capacity"):
+        with pytest.raises(ValueError, match="limit of 5"):
             add_subject_to_user(user, Subject.objects.create(name="Extra"))
 
     def test_add_subject_duplicate_returns_existing(self, user, subject):
@@ -336,22 +336,24 @@ class TestCheckNeedsSelection:
 @pytest.mark.django_db
 class TestAutoSelectSubjects:
 
-    def test_auto_selects_stale_pending(self, user):
+    def test_opted_in_and_idle_gets_enrolled(self, user):
         from django.utils import timezone
         from datetime import timedelta
+
+        user.preferences.auto_select_subjects_enabled = True
+        user.preferences.save()
+        old = timezone.now() - timedelta(hours=25)
+        User.objects.filter(id=user.id).update(last_login=old)
 
         s1 = Subject.objects.create(name="Completed")
         Topic.objects.create(subject=s1, title="T", level=1, order=1)
         s2 = Subject.objects.create(name="Available")
         Topic.objects.create(subject=s2, title="T", level=1, order=1)
-        old = timezone.now() - timedelta(hours=25)
+
         usp = UserSubjectProgress.objects.create(
             user=user, subject=s1,
             status=UserSubjectProgress.Status.COMPLETED,
             needs_subject_selection=True,
-        )
-        UserSubjectProgress.objects.filter(id=usp.id).update(
-            created_at=old, selection_pending_since=old,
         )
 
         auto_select_subjects()
@@ -362,30 +364,125 @@ class TestAutoSelectSubjects:
             user=user, subject=s2, status=UserSubjectProgress.Status.ACTIVE,
         ).exists()
 
-    def test_skips_recent_pending(self, user):
+    def test_not_opted_in_never_enrolled(self, user):
+        from django.utils import timezone
+        from datetime import timedelta
+
+        old = timezone.now() - timedelta(hours=25)
+        User.objects.filter(id=user.id).update(last_login=old)
+
         s1 = Subject.objects.create(name="S1")
+        Topic.objects.create(subject=s1, title="T", level=1, order=1)
+        s2 = Subject.objects.create(name="S2")
+        Topic.objects.create(subject=s2, title="T", level=1, order=1)
+
         usp = UserSubjectProgress.objects.create(
             user=user, subject=s1,
             status=UserSubjectProgress.Status.COMPLETED,
             needs_subject_selection=True,
         )
+
         auto_select_subjects()
+
         usp.refresh_from_db()
         assert usp.needs_subject_selection is True
+
+    def test_active_usp_blocks_auto_enroll(self, user):
+        from django.utils import timezone
+        from datetime import timedelta
+
+        user.preferences.auto_select_subjects_enabled = True
+        user.preferences.save()
+        old = timezone.now() - timedelta(hours=25)
+        User.objects.filter(id=user.id).update(last_login=old)
+
+        s1 = Subject.objects.create(name="Active")
+        Topic.objects.create(subject=s1, title="T", level=1, order=1)
+        UserSubjectProgress.objects.create(
+            user=user, subject=s1,
+            status=UserSubjectProgress.Status.ACTIVE,
+            needs_subject_selection=True,
+        )
+
+        auto_select_subjects()
+
+        usp = UserSubjectProgress.objects.get(user=user, subject=s1)
+        assert usp.needs_subject_selection is True
+
+    def test_not_idle_not_enrolled(self, user):
+        user.preferences.auto_select_subjects_enabled = True
+        user.preferences.save()
+
+        s1 = Subject.objects.create(name="S1")
+        Topic.objects.create(subject=s1, title="T", level=1, order=1)
+        s2 = Subject.objects.create(name="S2")
+        Topic.objects.create(subject=s2, title="T", level=1, order=1)
+
+        usp = UserSubjectProgress.objects.create(
+            user=user, subject=s1,
+            status=UserSubjectProgress.Status.COMPLETED,
+            needs_subject_selection=True,
+        )
+
+        auto_select_subjects()
+
+        usp.refresh_from_db()
+        assert usp.needs_subject_selection is True
+
+    def test_enrolls_once_clears_all_flags(self, user):
+        from django.utils import timezone
+        from datetime import timedelta
+
+        user.preferences.auto_select_subjects_enabled = True
+        user.preferences.save()
+        old = timezone.now() - timedelta(hours=25)
+        User.objects.filter(id=user.id).update(last_login=old)
+
+        s1 = Subject.objects.create(name="S1")
+        Topic.objects.create(subject=s1, title="T", level=1, order=1)
+        s2 = Subject.objects.create(name="S2")
+        Topic.objects.create(subject=s2, title="T", level=1, order=1)
+        s3 = Subject.objects.create(name="Available")
+        Topic.objects.create(subject=s3, title="T", level=1, order=1)
+
+        usp1 = UserSubjectProgress.objects.create(
+            user=user, subject=s1,
+            status=UserSubjectProgress.Status.COMPLETED,
+            needs_subject_selection=True,
+        )
+        usp2 = UserSubjectProgress.objects.create(
+            user=user, subject=s2,
+            status=UserSubjectProgress.Status.COMPLETED,
+            needs_subject_selection=True,
+        )
+
+        auto_select_subjects()
+
+        usp1.refresh_from_db()
+        usp2.refresh_from_db()
+        assert usp1.needs_subject_selection is False
+        assert usp2.needs_subject_selection is False
+        assert UserSubjectProgress.objects.filter(
+            user=user, subject=s3, status=UserSubjectProgress.Status.ACTIVE,
+        ).exists()
 
     def test_skips_when_no_suggestions(self, user):
         from django.utils import timezone
         from datetime import timedelta
-        s1 = Subject.objects.create(name="Lonely")
+
+        user.preferences.auto_select_subjects_enabled = True
+        user.preferences.save()
         old = timezone.now() - timedelta(hours=25)
+        User.objects.filter(id=user.id).update(last_login=old)
+
+        s1 = Subject.objects.create(name="Lonely")
         usp = UserSubjectProgress.objects.create(
             user=user, subject=s1,
             status=UserSubjectProgress.Status.COMPLETED,
             needs_subject_selection=True,
         )
-        UserSubjectProgress.objects.filter(id=usp.id).update(
-            created_at=old, selection_pending_since=old,
-        )
+
         auto_select_subjects()
+
         usp.refresh_from_db()
         assert usp.needs_subject_selection is True

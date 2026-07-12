@@ -224,7 +224,7 @@ Response 200:
 [
   {
     "id":                int,      // subject ID
-    "name":              string,   // canonical subject name
+    "name":              string,   // subject name
     "enrollment_count":  int,      // active learners
     "is_enrolled":       boolean,  // current user is enrolled
     "is_completed":      boolean,  // current user completed this subject

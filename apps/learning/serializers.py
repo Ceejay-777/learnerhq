@@ -8,7 +8,7 @@ class SubjectSerializer(serializers.ModelSerializer):
         model = Subject
         fields = ["id", "name", "created_at"]
         extra_kwargs = {
-            'name': {'help_text': 'Canonical name of the subject.'},
+            'name': {'help_text': 'Name of the subject.'},
         }
 
 

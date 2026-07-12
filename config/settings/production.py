@@ -3,6 +3,7 @@ import logging
 import os
 import sentry_sdk
 from sentry_sdk.integrations.django import DjangoIntegration
+from sentry_sdk.integrations.celery import CeleryIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 
 SENTRY_DSN = os.environ.get("SENTRY_DSN")
@@ -10,7 +11,7 @@ if SENTRY_DSN:
     sentry_logging = LoggingIntegration(sentry_logs_level=logging.INFO)
     sentry_sdk.init(
         dsn=SENTRY_DSN,
-        integrations=[DjangoIntegration(), sentry_logging],
+        integrations=[DjangoIntegration(), CeleryIntegration(), sentry_logging],
         traces_sample_rate=0.1,
         profiles_sample_rate=0.1,
         send_default_pii=True,

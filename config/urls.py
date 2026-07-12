@@ -4,8 +4,16 @@ from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 
+from apps.core.health import get_health_status
+
+
 def health_check(request):
-    return JsonResponse({"status": "ok"})
+    status = get_health_status()
+    all_healthy = all(status.values())
+    return JsonResponse(
+        {"status": "ok" if all_healthy else "degraded", "checks": status},
+        status=200 if all_healthy else 503,
+    )
 
 
 urlpatterns = [

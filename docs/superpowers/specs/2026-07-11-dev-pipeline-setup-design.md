@@ -8,7 +8,7 @@ quiz generation, review — so the API actually produces real results.
 
 - Fix `development.py` settings (Sentry bug, throttling)
 - Create a seed command to populate the DB with 15 specific subjects
-- Wire `canonicalize_subject` to a new `POST /api/learning/subjects/create` endpoint
+- Wire `resolve_or_create_subject` to a new `POST /api/learning/subjects/create` endpoint
 - Verify the full Celery-powered pipeline generates topic content and quizzes
 
 ## Infrastructure
@@ -27,7 +27,7 @@ quiz generation, review — so the API actually produces real results.
 
 ### `apps/learning/management/commands/seed_subjects.py`
 Management command that creates the following subjects via
-`canonicalize_subject()` and enrolls a system user to trigger roadmap
+`resolve_or_create_subject()` and enrolls a system user to trigger roadmap
 generation:
 
 1. American Football
@@ -48,7 +48,7 @@ generation:
 
 ### `POST /api/learning/subjects/create`
 New endpoint for user-facing subject creation. Calls
-`canonicalize_subject(name)` which resolves via AI (Gemini embeddings
+`resolve_or_create_subject(name)` which resolves via AI (Gemini embeddings
 + Groq ranking) to either match an existing subject, create a new one,
 or ask for narrowing. On resolve/create, auto-enrolls the authenticated
 user and triggers roadmap generation on first enrollment.

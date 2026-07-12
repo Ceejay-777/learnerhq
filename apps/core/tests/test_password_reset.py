@@ -1,4 +1,5 @@
 import pytest
+from unittest import mock
 from rest_framework import status
 from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
@@ -24,6 +25,17 @@ class TestPasswordResetRequest:
         client = APIClient()
         response = client.post('/api/auth/password-reset/request', {
             'email': 'nobody@example.com',
+        }, format='json')
+        assert response.status_code == status.HTTP_200_OK
+
+    @mock.patch('config.utils.tasks.send_password_reset_email.delay')
+    def test_returns_200_when_email_dispatch_fails(self, mock_delay):
+        mock_delay.side_effect = RuntimeError("Broker unreachable")
+        User = get_user_model()
+        User.objects.create_user(email='user@example.com', password='StrongPass123')
+        client = APIClient()
+        response = client.post('/api/auth/password-reset/request', {
+            'email': 'user@example.com',
         }, format='json')
         assert response.status_code == status.HTTP_200_OK
 

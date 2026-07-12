@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from rest_framework import serializers
-from .models import PasswordResetToken
+from .models import PasswordResetToken, UserPreferences
 
 User = get_user_model()
 
@@ -13,6 +13,7 @@ class SignUpSerializer(serializers.Serializer):
     display_name = serializers.CharField(max_length=100, required=False, allow_blank=True, help_text="Optional display name shown on leaderboard.")
     avatar = serializers.URLField(required=False, allow_blank=True, help_text="Optional URL to avatar image.")
     bio = serializers.CharField(required=False, allow_blank=True, help_text="Optional short biography.")
+    auto_select_subjects_enabled = serializers.BooleanField(default=False, help_text="Opt in to automatic subject selection when idle.")
 
     def validate_email(self, value):
         if User.objects.filter(email=value).exists():
@@ -27,10 +28,17 @@ class SignUpSerializer(serializers.Serializer):
         return value
 
     def create(self, validated_data):
+        auto_select = validated_data.pop('auto_select_subjects_enabled', False)
         password = validated_data.pop('password')
         user = User(**validated_data)
         user.set_password(password)
         user.save()
+        if auto_select:
+            from django.utils import timezone
+            UserPreferences.objects.filter(user=user).update(
+                auto_select_subjects_enabled=True,
+                auto_select_subjects_consent_at=timezone.now(),
+            )
         return user
 
 
@@ -67,19 +75,44 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         return attrs
 
 
+class UserPreferencesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserPreferences
+        fields = [
+            'leaderboard_visible',
+            'others_learning_visible',
+            'auto_select_subjects_enabled',
+        ]
+
+
 class UserProfileSerializer(serializers.ModelSerializer):
+    preferences = UserPreferencesSerializer(read_only=True)
+
     class Meta:
         model = User
         fields = [
             'email', 'display_name', 'avatar', 'bio',
-            'leaderboard_visible', 'others_learning_visible',
+            'preferences',
             'date_joined',
         ]
-        read_only_fields = ['email', 'date_joined']
+        read_only_fields = ['email', 'date_joined', 'preferences']
         extra_kwargs = {
             'display_name': {'help_text': 'Display name shown on leaderboard and to other learners.'},
             'avatar': {'help_text': 'URL to avatar image.'},
             'bio': {'help_text': 'Short biography or tagline.'},
+        }
+
+
+class PreferencesUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserPreferences
+        fields = [
+            'leaderboard_visible',
+            'others_learning_visible',
+            'auto_select_subjects_enabled',
+        ]
+        extra_kwargs = {
             'leaderboard_visible': {'help_text': 'Whether to show on leaderboards.'},
             'others_learning_visible': {'help_text': 'Whether to show in "others learning" lists.'},
+            'auto_select_subjects_enabled': {'help_text': 'Opt in to automatic subject selection when idle.'},
         }

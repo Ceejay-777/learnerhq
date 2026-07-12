@@ -19,18 +19,18 @@ class TestUserModel:
     def test_leaderboard_visible_defaults_to_true(self):
         User = get_user_model()
         user = User.objects.create_user(email='test@example.com', password='strongpass123')
-        assert user.leaderboard_visible is True
+        assert user.preferences.leaderboard_visible is True
 
     def test_others_learning_visible_defaults_to_true(self):
         User = get_user_model()
         user = User.objects.create_user(email='test@example.com', password='strongpass123')
-        assert user.others_learning_visible is True
+        assert user.preferences.others_learning_visible is True
 
     def test_visibility_toggles_are_independent(self):
         User = get_user_model()
         user = User.objects.create_user(email='test@example.com', password='strongpass123')
-        user.leaderboard_visible = False
-        user.save(update_fields=['leaderboard_visible'])
-        user.refresh_from_db()
-        assert user.leaderboard_visible is False
-        assert user.others_learning_visible is True
+        user.preferences.leaderboard_visible = False
+        user.preferences.save(update_fields=['leaderboard_visible'])
+        user.preferences.refresh_from_db()
+        assert user.preferences.leaderboard_visible is False
+        assert user.preferences.others_learning_visible is True
