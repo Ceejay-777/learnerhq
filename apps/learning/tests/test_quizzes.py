@@ -350,6 +350,38 @@ class TestValidateQuizResponse:
         with pytest.raises(GenerationError, match="missing explanation"):
             _validate_quiz_response(data, QuizAttempt.QuizType.NORMAL)
 
+    def test_strips_letter_prefix_from_options(self):
+        data = _make_quiz_data(4, 100)
+        data["questions"][0]["options"] = ["a) The Treaty of Versailles", "B. Rise of fascism", "c) Failure of appeasement", "d) Invasion of Poland"]
+        data["questions"][1]["options"] = ["A) foo", "b) bar", "C. baz", "d qux"]
+        result = _validate_quiz_response(data, QuizAttempt.QuizType.NORMAL)
+        assert result["questions"][0]["options"] == [
+            "The Treaty of Versailles", "Rise of fascism", "Failure of appeasement", "Invasion of Poland",
+        ]
+        assert result["questions"][1]["options"] == ["foo", "bar", "baz", "qux"]
+
+    def test_options_without_prefix_unchanged(self):
+        data = _make_quiz_data(4, 100)
+        data["questions"][0]["options"] = ["The Treaty of Versailles", "Rise of fascism", "Failure of appeasement", "Invasion of Poland"]
+        original = list(data["questions"][0]["options"])
+        result = _validate_quiz_response(data, QuizAttempt.QuizType.NORMAL)
+        assert result["questions"][0]["options"] == original
+
+    def test_options_empty_after_strip_raises(self):
+        data = _make_quiz_data(4, 100)
+        data["questions"][0]["options"] = ["a)", "b)", "c)", "d)"]
+        with pytest.raises(GenerationError, match="empty after stripping prefix"):
+            _validate_quiz_response(data, QuizAttempt.QuizType.NORMAL)
+
+    def test_prompt_contains_no_letter_label_instruction(self, user, topic):
+        with patch("apps.learning.services.generate_content") as gen:
+            gen.return_value = _make_quiz_data(5, 100)
+            from apps.learning.services import generate_quiz
+            generate_quiz(user, topic, QuizAttempt.QuizType.NORMAL)
+            prompt = gen.call_args[1]["prompt"]
+            assert "labeled a/b/c/d" not in prompt
+            assert "no 'a)'" in prompt or "no a)" in prompt.lower()
+
 
 @pytest.mark.django_db
 class TestCanTakeAdvancedQuiz:

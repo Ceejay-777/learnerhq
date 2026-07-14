@@ -32,3 +32,8 @@ htmlcov/
 # Project
 .superpowers/
 e2e_results/
+docs/
+
+postman/
+.postman/
+.opencode

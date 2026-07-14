@@ -1,4 +1,5 @@
 import math
+import re
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Literal
@@ -624,8 +625,16 @@ QUIZ_SYSTEM_INSTRUCTION = (
     "Every question should require the learner to apply, analyze, or evaluate — "
     "not just recall a fact. All four options must be plausible to someone who "
     "hasn't studied the material. Distractors should reflect common misconceptions. "
-    "Explanations should teach, not just identify the right answer."
+    "Explanations should teach, not just identify the right answer. "
+    "Each option string must contain only the option text — do NOT prefix options "
+    "with letters like 'a)', 'b)', 'A.', etc. The frontend renders its own labels."
 )
+
+_OPTION_LETTER_PREFIX_RE = re.compile(r"^[a-dA-D][).\s]+")
+
+
+def _strip_option_prefix(opt: str) -> str:
+    return _OPTION_LETTER_PREFIX_RE.sub("", opt).strip()
 
 QUIZ_QUESTION_ITEM = {
     "type": "object",
@@ -713,6 +722,10 @@ def _validate_quiz_response(data: dict, quiz_type: str) -> dict:
         opts = q.get("options")
         if not isinstance(opts, list) or len(opts) != 4 or not all(isinstance(o, str) and o.strip() for o in opts):
             raise GenerationError(f"Question {i} missing valid options", phase="quiz_validation")
+        opts = [_strip_option_prefix(o) for o in opts]
+        if not all(o for o in opts):
+            raise GenerationError(f"Question {i} options empty after stripping prefix", phase="quiz_validation")
+        q["options"] = opts
         ci = q.get("correct_index")
         if not isinstance(ci, int) or ci < 0 or ci > 3:
             raise GenerationError(f"Question {i} invalid correct_index", phase="quiz_validation")
@@ -896,7 +909,9 @@ def generate_quiz(
         f"(subject: '{topic.subject.name}').\n\n"
         f"Reference material:\n{topic.summary}\n\n"
         f"Question requirements:\n"
-        f"- 4 multiple-choice options per question (labeled a/b/c/d)\n"
+        f"- 4 multiple-choice options per question, plain text only — no "
+        f"'a)', 'b)', 'A.', or other letter prefixes in the option strings "
+        f"(the frontend renders its own labels)\n"
         f"- Provide the index (0-3) of the single correct answer\n"
         f"- Write a brief explanation of why the correct answer is right and why "
         f"the distractors are wrong\n"

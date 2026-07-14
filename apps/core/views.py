@@ -7,7 +7,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .authentication import CookieJWTAuthentication
 from .serializers import (
     SignUpSerializer,
     SignInSerializer,
@@ -58,6 +57,7 @@ def _clear_auth_cookies(response):
 
 class SignUpView(GenericAPIView):
     serializer_class = SignUpSerializer
+    authentication_classes = []
 
     @extend_schema(
         tags=['Auth'],
@@ -88,6 +88,7 @@ class SignUpView(GenericAPIView):
 
 class SignInView(GenericAPIView):
     serializer_class = SignInSerializer
+    authentication_classes = []
 
     @extend_schema(
         tags=['Auth'],
@@ -116,7 +117,8 @@ class SignInView(GenericAPIView):
 
 
 class RefreshTokenView(GenericAPIView):
-
+    authentication_classes = []
+    
     @extend_schema(
         tags=['Auth'],
         summary='Refresh tokens',
@@ -144,7 +146,6 @@ class RefreshTokenView(GenericAPIView):
 
 
 class SignOutView(GenericAPIView):
-    authentication_classes = [CookieJWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
@@ -161,6 +162,7 @@ class SignOutView(GenericAPIView):
 
 class PasswordResetRequestView(GenericAPIView):
     serializer_class = PasswordResetRequestSerializer
+    authentication_classes = []
 
     @extend_schema(
         tags=['Auth'],
@@ -189,6 +191,7 @@ class PasswordResetRequestView(GenericAPIView):
 
 class PasswordResetConfirmView(GenericAPIView):
     serializer_class = PasswordResetConfirmSerializer
+    authentication_classes = []
 
     @extend_schema(
         tags=['Auth'],
@@ -209,7 +212,6 @@ class PasswordResetConfirmView(GenericAPIView):
 
 
 class RetrieveUpdateProfileView(GenericAPIView):
-    authentication_classes = [CookieJWTAuthentication]
     permission_classes = [IsAuthenticated]
     serializer_class = UserProfileSerializer
 
