@@ -1,12 +1,12 @@
 import math
 import re
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Literal
 
 from django.contrib.auth import get_user_model
 from django.db import connection, models, transaction
-from django.db.models import Count, Q, Sum, Value
+from django.db.models import Count, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -32,6 +32,32 @@ class CreateResult:
 class NarrowResult:
     action: Literal["narrow"]
     suggestion: str
+
+
+@dataclass
+class SubjectDetailResult:
+    subject_id: int
+    name: str
+    status: str
+    points: int
+    level_unlocked: int
+    created_at: datetime
+    notification_frequency_hours: int
+    next_due_at: datetime | None
+    levels: list[dict]
+    topics: list[dict]
+
+
+@dataclass
+class SubjectPreviewResult:
+    subject_id: int
+    name: str
+    enrollment_count: int
+    is_enrolled: bool
+    is_completed: bool
+    is_interested: bool
+    levels: list[dict]
+    topics: list[dict]
 
 
 def _compute_and_store_embedding(subject: Subject, text: str) -> None:
@@ -460,6 +486,80 @@ def compute_level_threshold(topic_count: int) -> int:
     return max(1, min(math.ceil(topic_count * 0.8), topic_count - 1))
 
 
+def get_subject_detail(user, subject_id: int) -> SubjectDetailResult:
+    usp = (
+        UserSubjectProgress.objects
+        .select_related("subject")
+        .get(user=user, subject_id=subject_id)
+    )
+
+    topic_statuses = (
+        TopicProgress.objects
+        .filter(user=user, topic=OuterRef("pk"))
+        .values("status")[:1]
+    )
+    completed_subq = (
+        TopicProgress.objects
+        .filter(user=user, topic=OuterRef("pk"))
+        .values("completed_at")[:1]
+    )
+    topics = (
+        Topic.objects
+        .filter(subject=usp.subject)
+        .annotate(
+            user_progress_status=Subquery(topic_statuses),
+            user_completed_at=Subquery(completed_subq),
+        )
+        .order_by("level", "order")
+    )
+
+    level_groups = {}
+    for t in topics:
+        level_groups.setdefault(t.level, {"total": 0, "passed": 0})
+        level_groups[t.level]["total"] += 1
+        if t.user_progress_status in (TopicProgress.Status.PASSED, TopicProgress.Status.ADVANCED_PASSED):
+            level_groups[t.level]["passed"] += 1
+
+    levels = []
+    for lv in (1, 2, 3):
+        info = level_groups.get(lv, {"total": 0, "passed": 0})
+        levels.append({
+            "level": lv,
+            "total": info["total"],
+            "passed": info["passed"],
+            "threshold": compute_level_threshold(info["total"]) if info["total"] > 0 else 0,
+            "is_unlocked": lv <= usp.level_unlocked,
+        })
+
+    topics_data = []
+    passed_statuses = (TopicProgress.Status.PASSED, TopicProgress.Status.ADVANCED_PASSED)
+    for t in topics:
+        topics_data.append({
+            "id": t.id,
+            "title": t.title,
+            "level": t.level,
+            "order": t.order,
+            "content_status": t.content_status,
+            "review_status": t.review_status,
+            "user_progress_status": t.user_progress_status,
+            "is_passed": t.user_progress_status in passed_statuses,
+            "completed_at": t.user_completed_at,
+        })
+
+    return SubjectDetailResult(
+        subject_id=usp.subject_id,
+        name=usp.subject.name,
+        status=usp.status,
+        points=usp.points,
+        level_unlocked=usp.level_unlocked,
+        created_at=usp.created_at,
+        notification_frequency_hours=usp.notification_frequency_hours,
+        next_due_at=usp.next_due_at,
+        levels=levels,
+        topics=topics_data,
+    )
+
+
 @dataclass
 class LevelCheckResult:
     action: Literal["none", "level_up", "subject_completed"]
@@ -595,6 +695,60 @@ def explore_subjects(user) -> list[dict]:
         }
         for s in subjects
     ]
+
+
+def get_subject_preview(user, subject_id: int) -> SubjectPreviewResult:
+    subject = Subject.objects.get(id=subject_id)
+
+    enrolled_ids = set(
+        UserSubjectProgress.objects.filter(user=user).values_list("subject_id", flat=True)
+    )
+    completed_ids = set(
+        UserSubjectProgress.objects.filter(
+            user=user, status=UserSubjectProgress.Status.COMPLETED,
+        ).values_list("subject_id", flat=True)
+    )
+    interest_ids = set(
+        UserInterest.objects.filter(user=user).values_list("subject_id", flat=True)
+    )
+    enrollment_count = UserSubjectProgress.objects.filter(
+        subject=subject, status=UserSubjectProgress.Status.ACTIVE,
+    ).count()
+
+    topics = Topic.objects.filter(subject=subject).order_by("level", "order")
+
+    level_counts = {}
+    for t in topics:
+        level_counts.setdefault(t.level, 0)
+        level_counts[t.level] += 1
+
+    levels = []
+    for lv in (1, 2, 3):
+        levels.append({
+            "level": lv,
+            "topic_count": level_counts.get(lv, 0),
+        })
+
+    topics_data = [
+        {
+            "id": t.id,
+            "title": t.title,
+            "level": t.level,
+            "order": t.order,
+        }
+        for t in topics
+    ]
+
+    return SubjectPreviewResult(
+        subject_id=subject.id,
+        name=subject.name,
+        enrollment_count=enrollment_count,
+        is_enrolled=subject.id in enrolled_ids,
+        is_completed=subject.id in completed_ids,
+        is_interested=subject.id in interest_ids,
+        levels=levels,
+        topics=topics_data,
+    )
 
 
 def mark_subject_interest(user, subject) -> UserInterest:

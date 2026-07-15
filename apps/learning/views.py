@@ -19,6 +19,7 @@ from .serializers import (
     OthersLearningEntrySerializer,
     ResourceLinksViewedResponseSerializer,
     SubjectDetailSerializer,
+    SubjectPreviewSerializer,
     SubjectSuggestionSerializer,
     SubmitQuizRequestSerializer,
     SubmitQuizResponseSerializer,
@@ -32,6 +33,8 @@ from .services import (
     check_level_progress,
     explore_subjects,
     generate_quiz,
+    get_subject_detail,
+    get_subject_preview,
     global_leaderboard,
     mark_resource_links_viewed,
     mark_subject_interest,
@@ -452,80 +455,52 @@ class SubjectDetailView(GenericAPIView):
         responses={200: SubjectDetailSerializer, 404: None},
     )
     def get(self, request, subject_id):
-        from django.db.models import OuterRef, Subquery, Count, Q
-        from .services import compute_level_threshold
-
         try:
-            usp = (
-                UserSubjectProgress.objects
-                .select_related("subject")
-                .get(user=request.user, subject_id=subject_id)
-            )
+            result = get_subject_detail(request.user, subject_id)
         except UserSubjectProgress.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        topic_statuses = (
-            TopicProgress.objects
-            .filter(user=request.user, topic=OuterRef("pk"))
-            .values("status")[:1]
-        )
-        completed_subq = (
-            TopicProgress.objects
-            .filter(user=request.user, topic=OuterRef("pk"))
-            .values("completed_at")[:1]
-        )
-        topics = (
-            Topic.objects
-            .filter(subject=usp.subject)
-            .annotate(
-                user_progress_status=Subquery(topic_statuses),
-                user_completed_at=Subquery(completed_subq),
-            )
-            .order_by("level", "order")
-        )
+        return Response({
+            "data": {
+                "id": result.subject_id,
+                "name": result.name,
+                "status": result.status,
+                "points": result.points,
+                "level_unlocked": result.level_unlocked,
+                "created_at": result.created_at,
+                "notification_frequency_hours": result.notification_frequency_hours,
+                "next_due_at": result.next_due_at,
+                "levels": result.levels,
+                "topics": result.topics,
+            },
+            "status": "success",
+        })
 
-        level_groups = {}
-        for t in topics:
-            level_groups.setdefault(t.level, {"total": 0, "passed": 0})
-            level_groups[t.level]["total"] += 1
-            if t.user_progress_status in (TopicProgress.Status.PASSED, TopicProgress.Status.ADVANCED_PASSED):
-                level_groups[t.level]["passed"] += 1
 
-        levels = []
-        for lv in (1, 2, 3):
-            info = level_groups.get(lv, {"total": 0, "passed": 0})
-            levels.append({
-                "level": lv,
-                "total": info["total"],
-                "passed": info["passed"],
-                "threshold": compute_level_threshold(info["total"]) if info["total"] > 0 else 0,
-                "is_unlocked": lv <= usp.level_unlocked,
-            })
+class SubjectPreviewView(GenericAPIView):
+    permission_classes = [IsAuthenticated]
 
-        topics_data = []
-        for t in topics:
-            passed_statuses = (TopicProgress.Status.PASSED, TopicProgress.Status.ADVANCED_PASSED)
-            topics_data.append({
-                "id": t.id,
-                "title": t.title,
-                "level": t.level,
-                "order": t.order,
-                "content_status": t.content_status,
-                "review_status": t.review_status,
-                "user_progress_status": t.user_progress_status,
-                "is_passed": t.user_progress_status in passed_statuses,
-                "completed_at": t.user_completed_at,
-            })
+    @extend_schema(
+        tags=["Learning"],
+        summary="Preview a subject with its topic roadmap (no auth beyond login required)",
+        responses={200: SubjectPreviewSerializer, 404: None},
+    )
+    def get(self, request, subject_id):
+        try:
+            result = get_subject_preview(request.user, subject_id)
+        except Subject.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
         return Response({
-            "id": usp.subject_id,
-            "name": usp.subject.name,
-            "status": usp.status,
-            "points": usp.points,
-            "level_unlocked": usp.level_unlocked,
-            "created_at": usp.created_at,
-            "notification_frequency_hours": usp.notification_frequency_hours,
-            "next_due_at": usp.next_due_at,
-            "levels": levels,
-            "topics": topics_data,
+            "data": {
+                "id": result.subject_id,
+                "name": result.name,
+                "enrollment_count": result.enrollment_count,
+                "is_enrolled": result.is_enrolled,
+                "is_completed": result.is_completed,
+                "is_interested": result.is_interested,
+                "levels": result.levels,
+                "topics": result.topics,
+            },
+            "status": "success",
         })

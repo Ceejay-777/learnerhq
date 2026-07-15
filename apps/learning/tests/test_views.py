@@ -320,7 +320,9 @@ class TestSubjectDetailView:
         TopicProgress.objects.create(user=user, topic=tp, status=TopicProgress.Status.PASSED, completed_at="2026-01-01T00:00:00Z")
         resp = auth_client.get(f"/api/learning/subjects/{subject.id}")
         assert resp.status_code == status.HTTP_200_OK
-        data = resp.json()
+        body = resp.json()
+        assert body["status"] == "success"
+        data = body["data"]
         assert data["id"] == subject.id
         assert data["name"] == subject.name
         assert data["status"] == "ACTIVE"
@@ -347,7 +349,7 @@ class TestSubjectDetailView:
     def test_levels_unlocked_correctly(self, auth_client, user, subject):
         UserSubjectProgress.objects.create(user=user, subject=subject, level_unlocked=2)
         resp = auth_client.get(f"/api/learning/subjects/{subject.id}")
-        data = resp.json()
+        data = resp.json()["data"]
         assert data["levels"][0]["is_unlocked"] is True
         assert data["levels"][1]["is_unlocked"] is True
         assert data["levels"][2]["is_unlocked"] is False
@@ -357,7 +359,68 @@ class TestSubjectDetailView:
         UserSubjectProgress.objects.create(user=user, subject=s)
         resp = auth_client.get(f"/api/learning/subjects/{s.id}")
         assert resp.status_code == status.HTTP_200_OK
-        data = resp.json()
+        data = resp.json()["data"]
         assert len(data["topics"]) == 0
         assert data["levels"][0]["total"] == 0
         assert data["levels"][0]["threshold"] == 0
+
+
+@pytest.mark.django_db
+class TestSubjectPreviewView:
+
+    def test_requires_auth(self, client, subject):
+        resp = client.get(f"/api/learning/explore/{subject.id}")
+        assert resp.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_returns_404_for_nonexistent_subject(self, auth_client):
+        resp = auth_client.get("/api/learning/explore/99999")
+        assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_returns_preview_for_unenrolled_user(self, auth_client, user, subject):
+        resp = auth_client.get(f"/api/learning/explore/{subject.id}")
+        assert resp.status_code == status.HTTP_200_OK
+        body = resp.json()
+        assert body["status"] == "success"
+        data = body["data"]
+        assert data["id"] == subject.id
+        assert data["name"] == subject.name
+        assert data["is_enrolled"] is False
+        assert data["is_completed"] is False
+        assert data["is_interested"] is False
+        assert data["enrollment_count"] == 0
+        assert len(data["levels"]) == 3
+        assert data["levels"][0]["level"] == 1
+        assert data["levels"][0]["topic_count"] == 5
+        assert "passed" not in data["levels"][0]
+        assert "is_unlocked" not in data["levels"][0]
+        assert len(data["topics"]) == 5
+        first = data["topics"][0]
+        assert first["id"] is not None
+        assert first["title"].startswith("T")
+        assert first["level"] == 1
+        assert first["order"] == 1
+        assert "user_progress_status" not in first
+
+    def test_shows_enrolled_true_for_enrolled_user(self, auth_client, user, subject):
+        UserSubjectProgress.objects.create(user=user, subject=subject)
+        resp = auth_client.get(f"/api/learning/explore/{subject.id}")
+        assert resp.status_code == status.HTTP_200_OK
+        data = resp.json()["data"]
+        assert data["is_enrolled"] is True
+        assert data["is_completed"] is False
+
+    def test_shows_interested_true_when_marked(self, auth_client, user, subject):
+        UserInterest.objects.create(user=user, subject=subject)
+        resp = auth_client.get(f"/api/learning/explore/{subject.id}")
+        assert resp.status_code == status.HTTP_200_OK
+        data = resp.json()["data"]
+        assert data["is_interested"] is True
+
+    def test_empty_subject_without_topics(self, auth_client, user):
+        s = Subject.objects.create(name="No Topics")
+        resp = auth_client.get(f"/api/learning/explore/{s.id}")
+        assert resp.status_code == status.HTTP_200_OK
+        data = resp.json()["data"]
+        assert len(data["topics"]) == 0
+        assert data["levels"][0]["topic_count"] == 0
+        assert data["levels"][1]["topic_count"] == 0

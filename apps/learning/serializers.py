@@ -186,6 +186,29 @@ class SubjectDetailSerializer(serializers.Serializer):
     topics = SubjectTopicProgressSerializer(many=True, help_text="Full topic roadmap with per-user progress.")
 
 
+class SubjectPreviewLevelSerializer(serializers.Serializer):
+    level = serializers.IntegerField(help_text="Level number (1-3).")
+    topic_count = serializers.IntegerField(help_text="Number of topics in this level.")
+
+
+class SubjectPreviewTopicSerializer(serializers.Serializer):
+    id = serializers.IntegerField(help_text="Topic ID.")
+    title = serializers.CharField(help_text="Topic title.")
+    level = serializers.IntegerField(help_text="Difficulty level (1-3).")
+    order = serializers.IntegerField(help_text="Order within the roadmap.")
+
+
+class SubjectPreviewSerializer(serializers.Serializer):
+    id = serializers.IntegerField(help_text="Subject ID.")
+    name = serializers.CharField(help_text="Subject name.")
+    enrollment_count = serializers.IntegerField(help_text="Number of active learners.")
+    is_enrolled = serializers.BooleanField(help_text="Whether the current user is enrolled.")
+    is_completed = serializers.BooleanField(help_text="Whether the current user has completed this subject.")
+    is_interested = serializers.BooleanField(help_text="Whether the current user has marked interest.")
+    levels = SubjectPreviewLevelSerializer(many=True, help_text="Per-level topic counts (no progress data).")
+    topics = SubjectPreviewTopicSerializer(many=True, help_text="Full topic roadmap (no user progress).")
+
+
 class ResourceLinksViewedResponseSerializer(serializers.Serializer):
     status = serializers.CharField(help_text="Current topic progress status.")
     resource_links_viewed_at = serializers.DateTimeField(
