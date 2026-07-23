@@ -299,7 +299,7 @@ class TestLeaderboardAPI:
         UserSubjectProgress.objects.create(user=user, subject=subject, points=100)
         resp = auth_client.get("/api/learning/leaderboard")
         assert resp.status_code == status.HTTP_200_OK
-        data = resp.json()
+        data = resp.json()["data"]
         assert len(data) == 1
         assert data[0]["total_points"] == 100
 
@@ -307,7 +307,7 @@ class TestLeaderboardAPI:
         TopicProgress.objects.create(user=user, topic=topic, points=100)
         resp = auth_client.get(f"/api/learning/topics/{topic.id}/leaderboard")
         assert resp.status_code == status.HTTP_200_OK
-        data = resp.json()
+        data = resp.json()["data"]
         assert len(data) == 1
         assert data[0]["points"] == 100
 
@@ -320,6 +320,6 @@ class TestLeaderboardAPI:
         TopicProgress.objects.create(user=other, topic=topic, status=TopicProgress.Status.PASSED)
         resp = auth_client.get(f"/api/learning/topics/{topic.id}/others-learning")
         assert resp.status_code == status.HTTP_200_OK
-        data = resp.json()
+        data = resp.json()["data"]
         assert len(data) == 1
         assert data[0]["display_name"] == "Bob"

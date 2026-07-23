@@ -309,7 +309,7 @@ class TestNotificationAPI:
     def test_notification_status_returns_data(self, auth_client, user, subject, usp):
         resp = auth_client.get(f"/api/learning/subjects/{subject.id}/notification-status")
         assert resp.status_code == status.HTTP_200_OK
-        data = resp.json()
+        data = resp.json()["data"]
         assert data["frequency_hours"] == 24
         assert data["next_due_at"] is not None
 

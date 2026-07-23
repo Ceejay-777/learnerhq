@@ -67,7 +67,7 @@ class CheckLevelProgressView(GenericAPIView):
             usp = UserSubjectProgress.objects.get(user=request.user, subject=subject)
             resp["needs_subject_selection"] = usp.needs_subject_selection
             resp["suggestions"] = result.suggestions
-        return Response(resp)
+        return Response({"data": resp, "status": "success"})
 
 
 class ExploreSubjectsView(GenericAPIView):
@@ -80,7 +80,7 @@ class ExploreSubjectsView(GenericAPIView):
     )
     def get(self, request):
         results = explore_subjects(request.user)
-        return Response(results)
+        return Response({"data": results, "status": "success"})
 
 
 class MarkInterestView(GenericAPIView):
@@ -95,7 +95,7 @@ class MarkInterestView(GenericAPIView):
     def post(self, request, subject_id):
         subject = Subject.objects.get(id=subject_id)
         mark_subject_interest(request.user, subject)
-        return Response(status=status.HTTP_201_CREATED)
+        return Response({"data": {}, "status": "success"}, status=status.HTTP_201_CREATED)
 
     @extend_schema(
         tags=["Learning"],
@@ -123,8 +123,8 @@ class AddSubjectView(GenericAPIView):
         try:
             add_subject_to_user(request.user, subject)
         except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(status=status.HTTP_201_CREATED)
+            return Response({"detail": str(e), "status": "error"}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"data": {}, "status": "success"}, status=status.HTTP_201_CREATED)
 
 
 class RemoveSubjectView(GenericAPIView):
@@ -141,7 +141,7 @@ class RemoveSubjectView(GenericAPIView):
             user=request.user, subject_id=subject_id,
         ).delete()
         if not deleted:
-            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "Not found.", "status": "error"}, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -155,7 +155,7 @@ class SubjectSuggestionsView(GenericAPIView):
     )
     def get(self, request):
         suggestions = _generate_subject_suggestions(request.user)
-        return Response(suggestions)
+        return Response({"data": suggestions, "status": "success"})
 
 
 class SetNotificationFrequencyView(GenericAPIView):
@@ -171,16 +171,16 @@ class SetNotificationFrequencyView(GenericAPIView):
         subject = Subject.objects.get(id=subject_id)
         hours = request.data.get("frequency_hours")
         if hours is None:
-            return Response({"detail": "frequency_hours is required"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "frequency_hours is required", "status": "error"}, status=status.HTTP_400_BAD_REQUEST)
         try:
             hours = int(hours)
         except (TypeError, ValueError):
-            return Response({"detail": "frequency_hours must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "frequency_hours must be an integer", "status": "error"}, status=status.HTTP_400_BAD_REQUEST)
         try:
             set_notification_frequency(request.user, subject, hours)
         except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(status=status.HTTP_200_OK)
+            return Response({"detail": str(e), "status": "error"}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"data": {}, "status": "success"})
 
 
 class NotificationStatusView(GenericAPIView):
@@ -196,10 +196,13 @@ class NotificationStatusView(GenericAPIView):
         try:
             usp = UserSubjectProgress.objects.get(user=request.user, subject=subject)
         except UserSubjectProgress.DoesNotExist:
-            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "Not found.", "status": "error"}, status=status.HTTP_404_NOT_FOUND)
         return Response({
-            "frequency_hours": usp.notification_frequency_hours,
-            "next_due_at": usp.next_due_at,
+            "data": {
+                "frequency_hours": usp.notification_frequency_hours,
+                "next_due_at": usp.next_due_at,
+            },
+            "status": "success",
         })
 
 
@@ -213,7 +216,7 @@ class LeaderboardView(GenericAPIView):
     )
     def get(self, request):
         data = global_leaderboard()
-        return Response(data)
+        return Response({"data": data, "status": "success"})
 
 
 class TopicLeaderboardView(GenericAPIView):
@@ -226,7 +229,7 @@ class TopicLeaderboardView(GenericAPIView):
     )
     def get(self, request, topic_id):
         data = topic_leaderboard(topic_id)
-        return Response(data)
+        return Response({"data": data, "status": "success"})
 
 
 class OthersLearningView(GenericAPIView):
@@ -239,7 +242,7 @@ class OthersLearningView(GenericAPIView):
     )
     def get(self, request, topic_id):
         data = others_learning(topic_id, request.user)
-        return Response(data)
+        return Response({"data": data, "status": "success"})
 
 
 class GenerateQuizView(GenericAPIView):
@@ -258,18 +261,21 @@ class GenerateQuizView(GenericAPIView):
         try:
             attempt = generate_quiz(request.user, topic, quiz_type, prior_missed_questions)
         except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": str(e), "status": "error"}, status=status.HTTP_400_BAD_REQUEST)
         except ProviderError as e:
             return Response(
-                {"detail": "The AI service is temporarily unavailable. Please try again shortly."},
+                {"detail": "The AI service is temporarily unavailable. Please try again shortly.", "status": "error"},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         return Response({
-            "id": attempt.id,
-            "quiz_type": attempt.quiz_type,
-            "attempt_number": attempt.attempt_number,
-            "questions": attempt.questions,
-            "total_points": attempt.total_points,
+            "data": {
+                "id": attempt.id,
+                "quiz_type": attempt.quiz_type,
+                "attempt_number": attempt.attempt_number,
+                "questions": attempt.questions,
+                "total_points": attempt.total_points,
+            },
+            "status": "success",
         })
 
 
@@ -288,14 +294,17 @@ class SubmitQuizView(GenericAPIView):
         try:
             attempt = submit_quiz(attempt_id, answers)
         except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": str(e), "status": "error"}, status=status.HTTP_400_BAD_REQUEST)
         return Response({
-            "id": attempt.id,
-            "passed": attempt.passed,
-            "score": attempt.score,
-            "total_points": attempt.total_points,
-            "attempt_number": attempt.attempt_number,
-            "quiz_type": attempt.quiz_type,
+            "data": {
+                "id": attempt.id,
+                "passed": attempt.passed,
+                "score": attempt.score,
+                "total_points": attempt.total_points,
+                "attempt_number": attempt.attempt_number,
+                "quiz_type": attempt.quiz_type,
+            },
+            "status": "success",
         })
 
 
@@ -312,8 +321,11 @@ class MarkResourceLinksViewedView(GenericAPIView):
         topic = Topic.objects.get(id=topic_id)
         tp = mark_resource_links_viewed(request.user, topic)
         return Response({
-            "status": tp.status,
-            "resource_links_viewed_at": tp.resource_links_viewed_at,
+            "data": {
+                "status": tp.status,
+                "resource_links_viewed_at": tp.resource_links_viewed_at,
+            },
+            "status": "success",
         })
 
 
@@ -332,7 +344,7 @@ class CreateSubjectView(GenericAPIView):
         serializer.is_valid(raise_exception=True)
         name = serializer.validated_data["name"].strip()
         if not name:
-            return Response({"detail": "Name is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Name is required.", "status": "error"}, status=status.HTTP_400_BAD_REQUEST)
 
         result = resolve_or_create_subject(name)
 
@@ -345,7 +357,7 @@ class CreateSubjectView(GenericAPIView):
         try:
             add_subject_to_user(request.user, result.subject)
         except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": str(e), "status": "error"}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(
             {
@@ -370,16 +382,19 @@ class TopicDetailView(GenericAPIView):
     def get(self, request, topic_id):
         topic = Topic.objects.select_related("subject").get(id=topic_id)
         return Response({
-            "id": topic.id,
-            "title": topic.title,
-            "summary": topic.summary,
-            "resource_links": topic.resource_links,
-            "level": topic.level,
-            "order": topic.order,
-            "content_status": topic.content_status,
-            "review_status": topic.review_status,
-            "subject_id": topic.subject_id,
-            "subject_name": topic.subject.name,
+            "data": {
+                "id": topic.id,
+                "title": topic.title,
+                "summary": topic.summary,
+                "resource_links": topic.resource_links,
+                "level": topic.level,
+                "order": topic.order,
+                "content_status": topic.content_status,
+                "review_status": topic.review_status,
+                "subject_id": topic.subject_id,
+                "subject_name": topic.subject.name,
+            },
+            "status": "success",
         })
 
 
@@ -443,7 +458,7 @@ class EnrolledSubjectsView(GenericAPIView):
                 "notification_frequency_hours": usp.notification_frequency_hours,
                 "next_due_at": usp.next_due_at,
             })
-        return Response(results)
+        return Response({"data": results, "status": "success"})
 
 
 class SubjectDetailView(GenericAPIView):
@@ -458,7 +473,7 @@ class SubjectDetailView(GenericAPIView):
         try:
             result = get_subject_detail(request.user, subject_id)
         except UserSubjectProgress.DoesNotExist:
-            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "Not found.", "status": "error"}, status=status.HTTP_404_NOT_FOUND)
 
         return Response({
             "data": {
@@ -489,7 +504,7 @@ class SubjectPreviewView(GenericAPIView):
         try:
             result = get_subject_preview(request.user, subject_id)
         except Subject.DoesNotExist:
-            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "Not found.", "status": "error"}, status=status.HTTP_404_NOT_FOUND)
 
         return Response({
             "data": {

@@ -50,7 +50,7 @@ class TestCheckLevelProgressView:
             TopicProgress.objects.create(user=user, topic=t, status=TopicProgress.Status.PASSED)
         resp = auth_client.post(f"/api/learning/subjects/{subject.id}/progress/check")
         assert resp.status_code == status.HTTP_200_OK
-        data = resp.json()
+        data = resp.json()["data"]
         assert data["action"] == "level_up"
         assert data["new_level_unlocked"] == 2
 
@@ -65,7 +65,7 @@ class TestCheckLevelProgressView:
             TopicProgress.objects.create(user=user, topic=t, status=TopicProgress.Status.PASSED)
         resp = auth_client.post(f"/api/learning/subjects/{subject.id}/progress/check")
         assert resp.status_code == status.HTTP_200_OK
-        data = resp.json()
+        data = resp.json()["data"]
         assert data["action"] == "subject_completed"
         assert data["needs_subject_selection"] is True
         assert len(data["suggestions"]) >= 0
@@ -77,7 +77,7 @@ class TestExploreSubjectsView:
     def test_returns_subjects(self, auth_client, subject):
         resp = auth_client.get("/api/learning/explore")
         assert resp.status_code == status.HTTP_200_OK
-        data = resp.json()
+        data = resp.json()["data"]
         assert len(data) >= 1
         assert data[0]["name"] == subject.name
 
@@ -89,7 +89,7 @@ class TestExploreSubjectsView:
         UserSubjectProgress.objects.create(user=user, subject=subject)
         UserInterest.objects.create(user=user, subject=subject)
         resp = auth_client.get("/api/learning/explore")
-        data = resp.json()
+        data = resp.json()["data"]
         entry = next(s for s in data if s["id"] == subject.id)
         assert entry["is_enrolled"] is True
         assert entry["is_interested"] is True
@@ -150,7 +150,7 @@ class TestSubjectSuggestionsView:
     def test_returns_suggestions(self, auth_client, user, subject):
         resp = auth_client.get("/api/learning/subjects/suggestions")
         assert resp.status_code == status.HTTP_200_OK
-        data = resp.json()
+        data = resp.json()["data"]
         assert isinstance(data, list)
 
 
@@ -175,7 +175,7 @@ class TestGenerateQuizView:
             format="json",
         )
         assert resp.status_code == status.HTTP_200_OK
-        data = resp.json()
+        data = resp.json()["data"]
         assert data["quiz_type"] == "NORMAL"
         assert data["attempt_number"] == 1
         assert data["total_points"] == 100
@@ -215,7 +215,7 @@ class TestSubmitQuizView:
             format="json",
         )
         assert resp.status_code == status.HTTP_200_OK
-        data = resp.json()
+        data = resp.json()["data"]
         assert data["passed"] is True
         assert data["score"] == 80
         assert data["total_points"] == 100
@@ -245,7 +245,7 @@ class TestMarkResourceLinksViewedView:
         topic = Topic.objects.filter(subject=subject).first()
         resp = auth_client.post(f"/api/learning/topics/{topic.id}/resource-links-viewed")
         assert resp.status_code == status.HTTP_200_OK
-        data = resp.json()
+        data = resp.json()["data"]
         assert data["status"] == "NOT_STARTED"
         assert data["resource_links_viewed_at"] is not None
         tp = TopicProgress.objects.get(user=user, topic=topic)
@@ -261,13 +261,13 @@ class TestEnrolledSubjectsView:
     def test_returns_empty_when_no_enrollments(self, auth_client):
         resp = auth_client.get("/api/learning/subjects")
         assert resp.status_code == status.HTTP_200_OK
-        assert resp.json() == []
+        assert resp.json()["data"] == []
 
     def test_returns_enrolled_subject_with_counts(self, auth_client, user, subject):
         UserSubjectProgress.objects.create(user=user, subject=subject)
         resp = auth_client.get("/api/learning/subjects")
         assert resp.status_code == status.HTTP_200_OK
-        data = resp.json()
+        data = resp.json()["data"]
         assert len(data) == 1
         entry = data[0]
         assert entry["id"] == subject.id
@@ -283,7 +283,7 @@ class TestEnrolledSubjectsView:
         UserSubjectProgress.objects.create(user=user, subject=subject)
         tp = TopicProgress.objects.create(user=user, topic=Topic.objects.first(), status=TopicProgress.Status.PASSED)
         resp = auth_client.get("/api/learning/subjects")
-        data = resp.json()
+        data = resp.json()["data"]
         assert data[0]["topics_passed"] == 1
         assert data[0]["percent_complete"] == 20
 
@@ -294,7 +294,7 @@ class TestEnrolledSubjectsView:
         Topic.objects.create(subject=other_subj, title="T", level=1, order=1)
         UserSubjectProgress.objects.create(user=other, subject=other_subj)
         resp = auth_client.get("/api/learning/subjects")
-        data = resp.json()
+        data = resp.json()["data"]
         assert len(data) == 1
         assert data[0]["id"] == subject.id
 
