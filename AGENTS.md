@@ -26,7 +26,7 @@ celery -A config beat -l info        # separate terminal
 - **No ViewSets.** Every endpoint is a `GenericAPIView` with one method. Views call service functions; they never touch models.
 - **Service layer** (`apps/*/services.py`) holds all business logic. Dataclass return types (e.g. `ResolveResult`, `LevelCheckResult`) instead of bare dicts.
 - **Serializers** handle validation + OpenAPI schema. `drf-spectacular` at `/api/docs/`.
-- **AI providers** live in `apps/ai/services.py`: Gemini for generation & embedding, Groq for review & ranking. One function per role.
+- **AI providers** live in `apps/ai/services.py`: Gemini for generation, resolve/rank/standardize, and embeddings (native SDK). Groq for review (OpenAI-compatible via httpx). Fallback chains are role-specific, hardcoded in `_ROLE_PROVIDERS`. Gemini calls use `call_gemini_native()`; Groq calls use `_call_openai_compatible()`. Review failures return a flagged result instead of raising.
 - **Shared infra** in `config/utils/` (email, Celery tasks) rather than `apps/utils/`.
 - **Custom DRF exception handler** (`apps/core/exceptions.py`) normalizes all errors to `{"detail": "...", "status": "error"}`.
 - **Auth**: JWT in HTTP-only cookies (`access_token`: 15min, `refresh_token`: 7 days). No `Authorization` header. Use `CookieJWTAuthentication`.
@@ -64,8 +64,12 @@ celery -A config beat -l info        # separate terminal
 - Task functions in `apps/*/tasks.py` use deferred imports inside the function body.
 - Database-level `unique_together` enforced at model layer (no soft uniqueness checks).
 - **Execution branches must use structural type checks, never fragile heuristics.** Use `isinstance` against typed exception classes (e.g. `groq.RateLimitError`), typed return values, `getattr(obj, 'status_code')` on protocol-compliant objects, or explicit `is not None` — never `str(e)` substring matches or duck-typing by message content. If you're checking what error happened, use the class, not its string representation.
+- **AI provider errors (`ProviderError`) must propagate from Celery tasks** for `autoretry_for` to work. Only catch domain-specific errors (`GenerationError`) in task bodies — never swallow provider errors with manual `except ProviderError` blocks that return `None`.
 
 ## Build references (historical)
 
 - `.superpowers/build/` contains the original phased build plan and implementation brief — useful for understanding design intent behind features.
 - `.opencode/skills/` has `django-celery` and `pgvector-semantic-search` skill files.
+
+## Preferences
+When testing, valid user creds will always be in the .env file. Use it to log in as a test user rather than creating a new one.
