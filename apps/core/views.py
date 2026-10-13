@@ -25,6 +25,13 @@ class SuccessDetailSerializer(drf_serializers.Serializer):
     status = drf_serializers.CharField(help_text="Always 'success'.")
 
 
+class RefreshResponseSerializer(drf_serializers.Serializer):
+    detail = drf_serializers.CharField(help_text="Human-readable result message.")
+    status = drf_serializers.CharField(help_text="Always 'success'.")
+    access_token = drf_serializers.CharField(help_text="New JWT access token.")
+    refresh_token = drf_serializers.CharField(help_text="New JWT refresh token.")
+
+
 class UserProfileDataSerializer(drf_serializers.Serializer):
     data = UserProfileSerializer(help_text="User profile data.")
     status = drf_serializers.CharField(help_text="Always 'success'.")
@@ -32,9 +39,11 @@ class UserProfileDataSerializer(drf_serializers.Serializer):
 
 def _set_auth_cookies(response, user):
     refresh = RefreshToken.for_user(user)
+    access_token_str = str(refresh.access_token)
+    refresh_token_str = str(refresh)
     response.set_cookie(
         key='access_token',
-        value=str(refresh.access_token),
+        value=access_token_str,
         httponly=True,
         secure=not settings.DEBUG,
         samesite='Lax',
@@ -42,12 +51,13 @@ def _set_auth_cookies(response, user):
     )
     response.set_cookie(
         key='refresh_token',
-        value=str(refresh),
+        value=refresh_token_str,
         httponly=True,
         secure=not settings.DEBUG,
         samesite='Strict',
         max_age=604800,
     )
+    return access_token_str, refresh_token_str
 
 
 def _clear_auth_cookies(response):
@@ -123,7 +133,7 @@ class RefreshTokenView(GenericAPIView):
         tags=['Auth'],
         summary='Refresh tokens',
         request=None,
-        responses={200: SuccessDetailSerializer, 401: OpenApiResponse(description='Invalid or expired refresh token')},
+        responses={200: RefreshResponseSerializer, 401: OpenApiResponse(description='Invalid or expired refresh token')},
     )
     def post(self, request):
         refresh_token_value = request.COOKIES.get('refresh_token')
@@ -135,8 +145,15 @@ class RefreshTokenView(GenericAPIView):
         try:
             refresh = RefreshToken(refresh_token_value)
             user = User.objects.get(id=refresh.payload.get('user_id'))
-            response = Response({"detail": "Token refreshed.", "status": "success"})
-            _set_auth_cookies(response, user)
+            response = Response({
+                "detail": "Token refreshed.",
+                "status": "success",
+            })
+            access_token_str, refresh_token_str = _set_auth_cookies(response, user)
+            response.data.update({
+                "access_token": access_token_str,
+                "refresh_token": refresh_token_str,
+            })
             return response
         except Exception:
             return Response(

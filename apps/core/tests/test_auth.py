@@ -104,10 +104,38 @@ class TestRefreshToken:
         assert 'access_token' in response.cookies
         assert 'refresh_token' in response.cookies
 
+    def test_refresh_returns_tokens_in_body(self):
+        from rest_framework_simplejwt.tokens import RefreshToken as RT
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        user = User.objects.create_user(
+            email='body@example.com', password='StrongPass123',
+        )
+        refresh = RT.for_user(user)
+        client = APIClient()
+        client.cookies['refresh_token'] = str(refresh)
+        response = client.post('/api/auth/refresh', format='json')
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert 'access_token' in data
+        assert 'refresh_token' in data
+        assert isinstance(data['access_token'], str)
+        assert isinstance(data['refresh_token'], str)
+        assert len(data['access_token']) > 0
+        assert len(data['refresh_token']) > 0
+
     def test_refresh_without_token_returns_error(self):
         client = APIClient()
         response = client.post('/api/auth/refresh', format='json')
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_refresh_error_has_no_tokens_in_body(self):
+        client = APIClient()
+        response = client.post('/api/auth/refresh', format='json')
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        data = response.json()
+        assert 'access_token' not in data
+        assert 'refresh_token' not in data
 
 
 @pytest.mark.django_db
