@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+
 from .models import PasswordResetToken
 
 User = get_user_model()
@@ -15,7 +16,7 @@ def set_password_with_token(email, token_str, new_password):
     if token.is_expired():
         raise ValueError("Reset token has expired")
     user.set_password(new_password)
-    user.save(update_fields=['password'])
+    user.save(update_fields=["password"])
     token.delete()
 
 
