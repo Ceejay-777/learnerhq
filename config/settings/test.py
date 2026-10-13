@@ -25,3 +25,6 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_CLASSES': [],
     'DEFAULT_THROTTLE_RATES': {},
 }
+
+# Keep SSE publishing in-process during tests (no Redis).
+del EVENTSTREAM_REDIS

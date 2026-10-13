@@ -22,6 +22,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     # Third-party
+    'django_eventstream',
     'rest_framework',
     'corsheaders',
     'drf_spectacular',
@@ -43,6 +44,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'apps.core.middleware.CookieJWTUserMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -180,3 +182,18 @@ ANYMAIL = {
 EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
 SERVICE_BASE_URL = os.environ.get("SERVICE_BASE_URL", "http://localhost:8000")
 
+# Server-sent events (django-eventstream). Channels are per-user and only the
+# owner may read them. EVENTSTREAM_REDIS lets Celery workers publish events to
+# SSE clients connected to a different (web) process; it follows the broker URL.
+EVENTSTREAM_CHANNELMANAGER_CLASS = 'apps.core.eventstream.UserChannelManager'
+
+_eventstream_redis = urlparse(CELERY_BROKER_URL)
+EVENTSTREAM_REDIS = {
+    'host': _eventstream_redis.hostname or 'localhost',
+    'port': _eventstream_redis.port or 6379,
+    'db': int(_eventstream_redis.path.lstrip('/') or 0),
+}
+if _eventstream_redis.password:
+    EVENTSTREAM_REDIS['password'] = _eventstream_redis.password
+if _eventstream_redis.scheme == 'rediss':
+    EVENTSTREAM_REDIS['ssl'] = True

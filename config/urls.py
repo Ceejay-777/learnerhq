@@ -23,4 +23,5 @@ urlpatterns = [
     path('api/docs/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/learning/', include('apps.learning.urls')),
     path('api/health/', health_check, name='health-check'),
+    path('api/events', include('django_eventstream.urls')),
 ]
