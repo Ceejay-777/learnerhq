@@ -10,10 +10,23 @@ from django.db.models import Count, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
-from apps.ai.services import generate_content, generate_embedding, rank_or_resolve, standardize_subject_name
 from apps.ai.exceptions import ProviderError
+from apps.ai.services import (
+    generate_content,
+    generate_embedding,
+    rank_or_resolve,
+    standardize_subject_name,
+)
+
 from .exceptions import GenerationError
-from .models import Subject, Topic, TopicProgress, UserInterest, UserSubjectProgress, QuizAttempt
+from .models import (
+    QuizAttempt,
+    Subject,
+    Topic,
+    TopicProgress,
+    UserInterest,
+    UserSubjectProgress,
+)
 
 
 @dataclass
@@ -63,6 +76,7 @@ class SubjectPreviewResult:
 def _compute_and_store_embedding(subject: Subject, text: str) -> None:
     if connection.vendor != "postgresql":
         return
+        
     embedding = generate_embedding(text)
     Subject.objects.filter(id=subject.id).update(embedding=embedding)
 
@@ -73,13 +87,14 @@ def _find_similar_subjects(query_vector: list[float]) -> list[dict]:
 
     from pgvector.django import CosineDistance
 
-    similar = Subject.objects.filter(
-        embedding__isnull=False,
-    ).annotate(
-        distance=CosineDistance("embedding", query_vector)
-    ).filter(
-        distance__lte=0.15
-    ).order_by("distance")[:5]
+    similar = (
+        Subject.objects.filter(
+            embedding__isnull=False,
+        )
+        .annotate(distance=CosineDistance("embedding", query_vector))
+        .filter(distance__lte=0.15)
+        .order_by("distance")[:5]
+    )
 
     return [
         {"id": str(s.id), "name": s.name, "similarity_score": float(1 - s.distance)}
@@ -97,15 +112,19 @@ def resolve_or_create_subject(raw_input: str) -> ResolveResult | NarrowResult:
 
     if not candidates:
         llm_result = standardize_subject_name(raw_input)
+        
         if not llm_result.get("is_specific", True):
             return NarrowResult(
                 action="narrow",
                 suggestion=llm_result.get("suggestion", "Please be more specific."),
             )
+            
         standardized_name = llm_result["standardized_name"]
+        
         with transaction.atomic():
             subject = Subject.objects.create(name=standardized_name)
             _compute_and_store_embedding(subject, standardized_name)
+            
         return ResolveResult(action="resolve", subject=subject)
 
     result = rank_or_resolve(raw_input, candidates)
@@ -158,7 +177,10 @@ TOPIC_CONTENT_SCHEMA = {
                 "properties": {
                     "title": {"type": "string"},
                     "url": {"type": "string"},
-                    "type": {"type": "string", "enum": ["article", "video", "wikipedia"]},
+                    "type": {
+                        "type": "string",
+                        "enum": ["article", "video", "wikipedia"],
+                    },
                 },
                 "required": ["title", "url", "type"],
             },
@@ -174,10 +196,14 @@ _VALID_TYPES = {"article", "video", "wikipedia"}
 
 def _validate_topic_content(data: dict) -> dict:
     if not isinstance(data, dict):
-        raise GenerationError("Response is not a dict", phase="topic_content_validation")
+        raise GenerationError(
+            "Response is not a dict", phase="topic_content_validation"
+        )
     summary = data.get("summary")
     if not isinstance(summary, str) or not summary.strip():
-        raise GenerationError("Missing or empty 'summary'", phase="topic_content_validation")
+        raise GenerationError(
+            "Missing or empty 'summary'", phase="topic_content_validation"
+        )
     links = data.get("resource_links")
     if not isinstance(links, list) or len(links) < 2 or len(links) > 5:
         raise GenerationError(
@@ -186,14 +212,22 @@ def _validate_topic_content(data: dict) -> dict:
         )
     for i, link in enumerate(links):
         if not isinstance(link, dict):
-            raise GenerationError(f"Resource link {i} is not a dict", phase="topic_content_validation")
+            raise GenerationError(
+                f"Resource link {i} is not a dict", phase="topic_content_validation"
+            )
         if not isinstance(link.get("title"), str) or not link["title"].strip():
-            raise GenerationError(f"Resource link {i} missing valid title", phase="topic_content_validation")
+            raise GenerationError(
+                f"Resource link {i} missing valid title",
+                phase="topic_content_validation",
+            )
         if not isinstance(link.get("url"), str) or not link["url"].strip():
-            raise GenerationError(f"Resource link {i} missing valid url", phase="topic_content_validation")
+            raise GenerationError(
+                f"Resource link {i} missing valid url", phase="topic_content_validation"
+            )
         if link.get("type") not in _VALID_TYPES:
             raise GenerationError(
-                f"Resource link {i} invalid type '{link.get('type')}'", phase="topic_content_validation"
+                f"Resource link {i} invalid type '{link.get('type')}'",
+                phase="topic_content_validation",
             )
     return {"summary": summary.strip(), "resource_links": links}
 
@@ -243,16 +277,18 @@ def generate_topic_content(topic_id: int) -> None:
 
 def review_topic_content(topic_id: int) -> bool:
     from apps.ai.services import review_content as ai_review
+
     topic = Topic.objects.get(id=topic_id)
     result = ai_review(
         content=topic.summary,
         criteria={"topic_title": topic.title, "subject_name": topic.subject.name},
     )
-    return result["passed"]
+    return result["overall_passed"]
 
 
 def ensure_buffer_ahead(topic: Topic) -> None:
     from .tasks import generate_content_for_topic
+
     next_topics = Topic.objects.filter(
         subject=topic.subject,
         order__in=[topic.order + 1, topic.order + 2],
@@ -264,6 +300,7 @@ def ensure_buffer_ahead(topic: Topic) -> None:
 
 def generate_initial_batch(subject: Subject) -> None:
     from .tasks import generate_content_for_topic
+
     first_topics = Topic.objects.filter(
         subject=subject,
         order__lte=3,
@@ -297,7 +334,9 @@ ROADMAP_SCHEMA = {
 
 def _validate_roadmap_response(data: dict) -> list[dict]:
     if not isinstance(data, dict) or "topics" not in data:
-        raise GenerationError("Response missing 'topics' key", phase="roadmap_validation")
+        raise GenerationError(
+            "Response missing 'topics' key", phase="roadmap_validation"
+        )
     topics = data["topics"]
     if not isinstance(topics, list) or len(topics) < 20 or len(topics) > 25:
         raise GenerationError(
@@ -307,11 +346,17 @@ def _validate_roadmap_response(data: dict) -> list[dict]:
     validated = []
     for i, t in enumerate(topics):
         if not isinstance(t, dict):
-            raise GenerationError(f"Topic {i} is not an object", phase="roadmap_validation")
+            raise GenerationError(
+                f"Topic {i} is not an object", phase="roadmap_validation"
+            )
         if not isinstance(t.get("title"), str) or not t["title"].strip():
-            raise GenerationError(f"Topic {i} missing valid title", phase="roadmap_validation")
+            raise GenerationError(
+                f"Topic {i} missing valid title", phase="roadmap_validation"
+            )
         if not isinstance(t.get("level"), int) or t["level"] not in (1, 2, 3):
-            raise GenerationError(f"Topic {i} has invalid level", phase="roadmap_validation")
+            raise GenerationError(
+                f"Topic {i} has invalid level", phase="roadmap_validation"
+            )
         validated.append({"title": t["title"].strip(), "level": t["level"]})
     return validated
 
@@ -354,18 +399,23 @@ def generate_roadmap(subject: Subject, max_retries: int = 1) -> list[Topic]:
 def append_roadmap_topics(subject: Subject, topics_data: list[dict]) -> list[Topic]:
     from django.db.models import Max
 
-    max_order = Topic.objects.filter(subject=subject).aggregate(
-        max_order=Max("order")
-    )["max_order"] or 0
+    max_order = (
+        Topic.objects.filter(subject=subject).aggregate(max_order=Max("order"))[
+            "max_order"
+        ]
+        or 0
+    )
 
     topics = [
-        Topic(subject=subject, title=t["title"], level=t["level"], order=max_order + i + 1)
+        Topic(
+            subject=subject, title=t["title"], level=t["level"], order=max_order + i + 1
+        )
         for i, t in enumerate(topics_data)
     ]
     return Topic.objects.bulk_create(topics)
 
 
-TEMP_SHIFT = 10 ** 9
+TEMP_SHIFT = 10**9
 
 
 def insert_roadmap_topics(
@@ -375,18 +425,24 @@ def insert_roadmap_topics(
 ) -> list[Topic]:
     shift = len(topics_data)
 
-    Topic.objects.filter(
-        subject=subject, order__gte=insert_before_order
-    ).update(order=models.F("order") + TEMP_SHIFT)
+    Topic.objects.filter(subject=subject, order__gte=insert_before_order).update(
+        order=models.F("order") + TEMP_SHIFT
+    )
 
     topics = [
-        Topic(subject=subject, title=t["title"], level=t["level"], order=insert_before_order + i)
+        Topic(
+            subject=subject,
+            title=t["title"],
+            level=t["level"],
+            order=insert_before_order + i,
+        )
         for i, t in enumerate(topics_data)
     ]
     created = Topic.objects.bulk_create(topics)
 
     Topic.objects.filter(
-        subject=subject, order__gte=TEMP_SHIFT,
+        subject=subject,
+        order__gte=TEMP_SHIFT,
     ).update(order=models.F("order") - TEMP_SHIFT + shift)
 
     user_ids_past = list(
@@ -394,7 +450,9 @@ def insert_roadmap_topics(
             topic__subject=subject,
             status=TopicProgress.Status.PASSED,
             topic__order__gte=insert_before_order,
-        ).values_list("user_id", flat=True).distinct()
+        )
+        .values_list("user_id", flat=True)
+        .distinct()
     )
 
     bonus_tps = []
@@ -487,25 +545,18 @@ def compute_level_threshold(topic_count: int) -> int:
 
 
 def get_subject_detail(user, subject_id: int) -> SubjectDetailResult:
-    usp = (
-        UserSubjectProgress.objects
-        .select_related("subject")
-        .get(user=user, subject_id=subject_id)
+    usp = UserSubjectProgress.objects.select_related("subject").get(
+        user=user, subject_id=subject_id
     )
 
-    topic_statuses = (
-        TopicProgress.objects
-        .filter(user=user, topic=OuterRef("pk"))
-        .values("status")[:1]
-    )
-    completed_subq = (
-        TopicProgress.objects
-        .filter(user=user, topic=OuterRef("pk"))
-        .values("completed_at")[:1]
-    )
+    topic_statuses = TopicProgress.objects.filter(
+        user=user, topic=OuterRef("pk")
+    ).values("status")[:1]
+    completed_subq = TopicProgress.objects.filter(
+        user=user, topic=OuterRef("pk")
+    ).values("completed_at")[:1]
     topics = (
-        Topic.objects
-        .filter(subject=usp.subject)
+        Topic.objects.filter(subject=usp.subject)
         .annotate(
             user_progress_status=Subquery(topic_statuses),
             user_completed_at=Subquery(completed_subq),
@@ -517,34 +568,46 @@ def get_subject_detail(user, subject_id: int) -> SubjectDetailResult:
     for t in topics:
         level_groups.setdefault(t.level, {"total": 0, "passed": 0})
         level_groups[t.level]["total"] += 1
-        if t.user_progress_status in (TopicProgress.Status.PASSED, TopicProgress.Status.ADVANCED_PASSED):
+        if t.user_progress_status in (
+            TopicProgress.Status.PASSED,
+            TopicProgress.Status.ADVANCED_PASSED,
+        ):
             level_groups[t.level]["passed"] += 1
 
     levels = []
     for lv in (1, 2, 3):
         info = level_groups.get(lv, {"total": 0, "passed": 0})
-        levels.append({
-            "level": lv,
-            "total": info["total"],
-            "passed": info["passed"],
-            "threshold": compute_level_threshold(info["total"]) if info["total"] > 0 else 0,
-            "is_unlocked": lv <= usp.level_unlocked,
-        })
+        levels.append(
+            {
+                "level": lv,
+                "total": info["total"],
+                "passed": info["passed"],
+                "threshold": compute_level_threshold(info["total"])
+                if info["total"] > 0
+                else 0,
+                "is_unlocked": lv <= usp.level_unlocked,
+            }
+        )
 
     topics_data = []
-    passed_statuses = (TopicProgress.Status.PASSED, TopicProgress.Status.ADVANCED_PASSED)
+    passed_statuses = (
+        TopicProgress.Status.PASSED,
+        TopicProgress.Status.ADVANCED_PASSED,
+    )
     for t in topics:
-        topics_data.append({
-            "id": t.id,
-            "title": t.title,
-            "level": t.level,
-            "order": t.order,
-            "content_status": t.content_status,
-            "review_status": t.review_status,
-            "user_progress_status": t.user_progress_status,
-            "is_passed": t.user_progress_status in passed_statuses,
-            "completed_at": t.user_completed_at,
-        })
+        topics_data.append(
+            {
+                "id": t.id,
+                "title": t.title,
+                "level": t.level,
+                "order": t.order,
+                "content_status": t.content_status,
+                "review_status": t.review_status,
+                "user_progress_status": t.user_progress_status,
+                "is_passed": t.user_progress_status in passed_statuses,
+                "completed_at": t.user_completed_at,
+            }
+        )
 
     return SubjectDetailResult(
         subject_id=usp.subject_id,
@@ -570,18 +633,29 @@ class LevelCheckResult:
 
 def _generate_subject_suggestions(user, count: int = 5) -> list[dict]:
     enrolled_ids = list(
-        UserSubjectProgress.objects.filter(user=user).values_list("subject_id", flat=True)
+        UserSubjectProgress.objects.filter(user=user).values_list(
+            "subject_id", flat=True
+        )
     )
     interest_ids = list(
-        UserInterest.objects.filter(user=user).exclude(subject_id__in=enrolled_ids)
+        UserInterest.objects.filter(user=user)
+        .exclude(subject_id__in=enrolled_ids)
         .values_list("subject_id", flat=True)
     )
 
-    popular = Subject.objects.exclude(id__in=enrolled_ids).filter(
-        topics__isnull=False,
-    ).annotate(
-        enrollment_count=Count("user_progress", filter=Q(user_progress__status=UserSubjectProgress.Status.ACTIVE))
-    ).order_by("-enrollment_count")
+    popular = (
+        Subject.objects.exclude(id__in=enrolled_ids)
+        .filter(
+            topics__isnull=False,
+        )
+        .annotate(
+            enrollment_count=Count(
+                "user_progress",
+                filter=Q(user_progress__status=UserSubjectProgress.Status.ACTIVE),
+            )
+        )
+        .order_by("-enrollment_count")
+    )
 
     suggestions = []
     seen_ids = set()
@@ -589,14 +663,26 @@ def _generate_subject_suggestions(user, count: int = 5) -> list[dict]:
     for sid in interest_ids:
         s = Subject.objects.filter(id=sid).first()
         if s and s.id not in seen_ids:
-            suggestions.append({"id": s.id, "name": s.name, "reason": "You marked interest in this subject"})
+            suggestions.append(
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "reason": "You marked interest in this subject",
+                }
+            )
             seen_ids.add(s.id)
 
     for s in popular:
         if len(suggestions) >= count:
             break
         if s.id not in seen_ids:
-            suggestions.append({"id": s.id, "name": s.name, "reason": f"Popular subject ({s.enrollment_count} learners)"})
+            suggestions.append(
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "reason": f"Popular subject ({s.enrollment_count} learners)",
+                }
+            )
             seen_ids.add(s.id)
 
     return suggestions
@@ -608,7 +694,9 @@ def check_level_progress(user, subject) -> LevelCheckResult:
     level_topics = Topic.objects.filter(subject=subject, level=current_level)
     total = level_topics.count()
     completed = TopicProgress.objects.filter(
-        user=user, topic__subject=subject, topic__level=current_level,
+        user=user,
+        topic__subject=subject,
+        topic__level=current_level,
         status=TopicProgress.Status.PASSED,
     ).count()
     threshold = compute_level_threshold(total)
@@ -631,7 +719,9 @@ def check_level_progress(user, subject) -> LevelCheckResult:
     usp.status = UserSubjectProgress.Status.COMPLETED
     usp.needs_subject_selection = True
     usp.selection_pending_since = timezone.now()
-    usp.save(update_fields=["status", "needs_subject_selection", "selection_pending_since"])
+    usp.save(
+        update_fields=["status", "needs_subject_selection", "selection_pending_since"]
+    )
     suggestions = _generate_subject_suggestions(user)
     return LevelCheckResult(
         action="subject_completed",
@@ -641,7 +731,8 @@ def check_level_progress(user, subject) -> LevelCheckResult:
 
 def get_available_slots(user) -> int:
     active_count = UserSubjectProgress.objects.filter(
-        user=user, status=UserSubjectProgress.Status.ACTIVE,
+        user=user,
+        status=UserSubjectProgress.Status.ACTIVE,
     ).count()
     return max(0, 5 - active_count)
 
@@ -652,7 +743,9 @@ def add_subject_to_user(user, subject) -> UserSubjectProgress:
         return existing
 
     if get_available_slots(user) == 0:
-        raise ValueError("You've reached the limit of 5 active subjects. Remove one or complete a subject to add a new one.")
+        raise ValueError(
+            "You've reached the limit of 5 active subjects. Remove one or complete a subject to add a new one."
+        )
 
     if not Topic.objects.filter(subject=subject).exists():
         generate_roadmap(subject)
@@ -661,7 +754,8 @@ def add_subject_to_user(user, subject) -> UserSubjectProgress:
     usp = UserSubjectProgress.objects.create(user=user, subject=subject)
 
     UserSubjectProgress.objects.filter(
-        user=user, needs_subject_selection=True,
+        user=user,
+        needs_subject_selection=True,
     ).update(needs_subject_selection=False, selection_pending_since=None)
 
     return usp
@@ -669,20 +763,30 @@ def add_subject_to_user(user, subject) -> UserSubjectProgress:
 
 def explore_subjects(user) -> list[dict]:
     enrolled_ids = set(
-        UserSubjectProgress.objects.filter(user=user).values_list("subject_id", flat=True)
+        UserSubjectProgress.objects.filter(user=user).values_list(
+            "subject_id", flat=True
+        )
     )
     completed_ids = set(
         UserSubjectProgress.objects.filter(
-            user=user, status=UserSubjectProgress.Status.COMPLETED,
+            user=user,
+            status=UserSubjectProgress.Status.COMPLETED,
         ).values_list("subject_id", flat=True)
     )
     interest_ids = set(
         UserInterest.objects.filter(user=user).values_list("subject_id", flat=True)
     )
 
-    subjects = Subject.objects.filter(topics__isnull=False).annotate(
-        enrollment_count=Count("user_progress", filter=Q(user_progress__status=UserSubjectProgress.Status.ACTIVE)),
-    ).order_by("-enrollment_count", "name")
+    subjects = (
+        Subject.objects.filter(topics__isnull=False)
+        .annotate(
+            enrollment_count=Count(
+                "user_progress",
+                filter=Q(user_progress__status=UserSubjectProgress.Status.ACTIVE),
+            ),
+        )
+        .order_by("-enrollment_count", "name")
+    )
 
     return [
         {
@@ -701,18 +805,22 @@ def get_subject_preview(user, subject_id: int) -> SubjectPreviewResult:
     subject = Subject.objects.get(id=subject_id)
 
     enrolled_ids = set(
-        UserSubjectProgress.objects.filter(user=user).values_list("subject_id", flat=True)
+        UserSubjectProgress.objects.filter(user=user).values_list(
+            "subject_id", flat=True
+        )
     )
     completed_ids = set(
         UserSubjectProgress.objects.filter(
-            user=user, status=UserSubjectProgress.Status.COMPLETED,
+            user=user,
+            status=UserSubjectProgress.Status.COMPLETED,
         ).values_list("subject_id", flat=True)
     )
     interest_ids = set(
         UserInterest.objects.filter(user=user).values_list("subject_id", flat=True)
     )
     enrollment_count = UserSubjectProgress.objects.filter(
-        subject=subject, status=UserSubjectProgress.Status.ACTIVE,
+        subject=subject,
+        status=UserSubjectProgress.Status.ACTIVE,
     ).count()
 
     topics = Topic.objects.filter(subject=subject).order_by("level", "order")
@@ -724,10 +832,12 @@ def get_subject_preview(user, subject_id: int) -> SubjectPreviewResult:
 
     levels = []
     for lv in (1, 2, 3):
-        levels.append({
-            "level": lv,
-            "topic_count": level_counts.get(lv, 0),
-        })
+        levels.append(
+            {
+                "level": lv,
+                "topic_count": level_counts.get(lv, 0),
+            }
+        )
 
     topics_data = [
         {
@@ -762,7 +872,8 @@ def remove_subject_interest(user, subject) -> None:
 
 def check_needs_selection(user) -> dict | None:
     usp = UserSubjectProgress.objects.filter(
-        user=user, needs_subject_selection=True,
+        user=user,
+        needs_subject_selection=True,
     ).first()
     if usp is None:
         return None
@@ -789,6 +900,7 @@ _OPTION_LETTER_PREFIX_RE = re.compile(r"^[a-dA-D][).\s]+")
 
 def _strip_option_prefix(opt: str) -> str:
     return _OPTION_LETTER_PREFIX_RE.sub("", opt).strip()
+
 
 QUIZ_QUESTION_ITEM = {
     "type": "object",
@@ -870,49 +982,75 @@ def _validate_quiz_response(data: dict, quiz_type: str) -> dict:
             )
     for i, q in enumerate(questions):
         if not isinstance(q, dict):
-            raise GenerationError(f"Question {i} is not a dict", phase="quiz_validation")
+            raise GenerationError(
+                f"Question {i} is not a dict", phase="quiz_validation"
+            )
         if not isinstance(q.get("question"), str) or not q["question"].strip():
             raise GenerationError(f"Question {i} missing text", phase="quiz_validation")
         opts = q.get("options")
-        if not isinstance(opts, list) or len(opts) != 4 or not all(isinstance(o, str) and o.strip() for o in opts):
-            raise GenerationError(f"Question {i} missing valid options", phase="quiz_validation")
+        if (
+            not isinstance(opts, list)
+            or len(opts) != 4
+            or not all(isinstance(o, str) and o.strip() for o in opts)
+        ):
+            raise GenerationError(
+                f"Question {i} missing valid options", phase="quiz_validation"
+            )
         opts = [_strip_option_prefix(o) for o in opts]
         if not all(o for o in opts):
-            raise GenerationError(f"Question {i} options empty after stripping prefix", phase="quiz_validation")
+            raise GenerationError(
+                f"Question {i} options empty after stripping prefix",
+                phase="quiz_validation",
+            )
         q["options"] = opts
         ci = q.get("correct_index")
         if not isinstance(ci, int) or ci < 0 or ci > 3:
-            raise GenerationError(f"Question {i} invalid correct_index", phase="quiz_validation")
+            raise GenerationError(
+                f"Question {i} invalid correct_index", phase="quiz_validation"
+            )
         if not isinstance(q.get("explanation"), str) or not q["explanation"].strip():
-            raise GenerationError(f"Question {i} missing explanation", phase="quiz_validation")
+            raise GenerationError(
+                f"Question {i} missing explanation", phase="quiz_validation"
+            )
     return data
 
 
 def _next_attempt_number(user, topic, quiz_type: str) -> int:
-    last = QuizAttempt.objects.filter(
-        user=user, topic=topic, quiz_type=quiz_type,
-    ).order_by("-attempt_number").values_list("attempt_number", flat=True).first()
+    last = (
+        QuizAttempt.objects.filter(
+            user=user,
+            topic=topic,
+            quiz_type=quiz_type,
+        )
+        .order_by("-attempt_number")
+        .values_list("attempt_number", flat=True)
+        .first()
+    )
     return (last or 0) + 1
 
 
 def global_leaderboard(limit=50):
     User = get_user_model()
 
-    all_users = User.objects.select_related("preferences").annotate(
-        total_points=Coalesce(
-            Sum("subject_progress__points"), Value(0)
-        ),
-    ).order_by("-total_points", "id")
+    all_users = (
+        User.objects.select_related("preferences")
+        .annotate(
+            total_points=Coalesce(Sum("subject_progress__points"), Value(0)),
+        )
+        .order_by("-total_points", "id")
+    )
 
     result = []
     for rank, user in enumerate(all_users, 1):
         if user.preferences.leaderboard_visible:
-            result.append({
-                "rank": rank,
-                "user_id": user.id,
-                "display_name": user.display_name or user.email,
-                "total_points": user.total_points,
-            })
+            result.append(
+                {
+                    "rank": rank,
+                    "user_id": user.id,
+                    "display_name": user.display_name or user.email,
+                    "total_points": user.total_points,
+                }
+            )
             if len(result) >= limit:
                 break
 
@@ -920,19 +1058,26 @@ def global_leaderboard(limit=50):
 
 
 def topic_leaderboard(topic_id, limit=20):
-    progress_qs = TopicProgress.objects.filter(
-        topic_id=topic_id, points__gt=0,
-    ).select_related("user__preferences").order_by("-points", "user_id")
+    progress_qs = (
+        TopicProgress.objects.filter(
+            topic_id=topic_id,
+            points__gt=0,
+        )
+        .select_related("user__preferences")
+        .order_by("-points", "user_id")
+    )
 
     result = []
     for rank, tp in enumerate(progress_qs, 1):
         if tp.user.preferences.leaderboard_visible:
-            result.append({
-                "rank": rank,
-                "user_id": tp.user_id,
-                "display_name": tp.user.display_name or tp.user.email,
-                "points": tp.points,
-            })
+            result.append(
+                {
+                    "rank": rank,
+                    "user_id": tp.user_id,
+                    "display_name": tp.user.display_name or tp.user.email,
+                    "points": tp.points,
+                }
+            )
             if len(result) >= limit:
                 break
 
@@ -942,22 +1087,29 @@ def topic_leaderboard(topic_id, limit=20):
 def others_learning(topic_id, viewing_user, limit=10):
     topic = Topic.objects.get(id=topic_id)
     viewing_usp = UserSubjectProgress.objects.filter(
-        user=viewing_user, subject=topic.subject,
+        user=viewing_user,
+        subject=topic.subject,
     ).first()
     viewing_level = viewing_usp.level_unlocked if viewing_usp else 1
 
-    other_progress = TopicProgress.objects.filter(
-        topic=topic,
-    ).exclude(
-        user=viewing_user,
-    ).select_related("user").filter(
-        user__preferences__others_learning_visible=True,
+    other_progress = (
+        TopicProgress.objects.filter(
+            topic=topic,
+        )
+        .exclude(
+            user=viewing_user,
+        )
+        .select_related("user")
+        .filter(
+            user__preferences__others_learning_visible=True,
+        )
     )
 
     entries = []
     for tp in other_progress:
         usp = UserSubjectProgress.objects.filter(
-            user=tp.user, subject=topic.subject,
+            user=tp.user,
+            subject=topic.subject,
         ).first()
         if usp is None:
             continue
@@ -976,13 +1128,15 @@ def others_learning(topic_id, viewing_user, limit=10):
         else:
             continue
 
-        entries.append({
-            "priority": priority,
-            "user_id": tp.user_id,
-            "display_name": tp.user.display_name or tp.user.email,
-            "status": usp.status,
-            "level": tp.topic.level,
-        })
+        entries.append(
+            {
+                "priority": priority,
+                "user_id": tp.user_id,
+                "display_name": tp.user.display_name or tp.user.email,
+                "status": usp.status,
+                "level": tp.topic.level,
+            }
+        )
 
     entries.sort(key=lambda x: (x["priority"], x["user_id"]))
     for e in entries:
@@ -1010,7 +1164,10 @@ def can_take_advanced_quiz(user, topic) -> bool:
     tp = TopicProgress.objects.filter(user=user, topic=topic).first()
     if tp is None:
         return False
-    if tp.status not in (TopicProgress.Status.PASSED, TopicProgress.Status.ADVANCED_PASSED):
+    if tp.status not in (
+        TopicProgress.Status.PASSED,
+        TopicProgress.Status.ADVANCED_PASSED,
+    ):
         return False
     if tp.resource_links_viewed_at is None:
         return False
@@ -1030,21 +1187,36 @@ def generate_quiz(
 
     if quiz_type == QuizAttempt.QuizType.ADVANCED:
         if not can_take_advanced_quiz(user, topic):
-            raise ValueError("Advanced quiz not available: pass the normal quiz and engage with resource links first")
+            raise ValueError(
+                "Advanced quiz not available: pass the normal quiz and engage with resource links first"
+            )
     else:
         if tp.status == TopicProgress.Status.PASSED:
             raise ValueError("Normal quiz already passed for this topic")
 
-    last_attempt_time = QuizAttempt.objects.filter(
-        user=user, topic=topic, quiz_type=quiz_type,
-    ).order_by("-created_at").values_list("created_at", flat=True).first()
+    last_attempt_time = (
+        QuizAttempt.objects.filter(
+            user=user,
+            topic=topic,
+            quiz_type=quiz_type,
+        )
+        .order_by("-created_at")
+        .values_list("created_at", flat=True)
+        .first()
+    )
     if last_attempt_time is not None:
         cooldown_end = last_attempt_time + timedelta(hours=RETRY_COOLDOWN_HOURS)
         if timezone.now() < cooldown_end:
             remaining = (cooldown_end - timezone.now()).seconds // 60
-            raise ValueError(f"Please wait {remaining} minutes before retaking this quiz")
+            raise ValueError(
+                f"Please wait {remaining} minutes before retaking this quiz"
+            )
 
-    schema = NORMAL_QUIZ_SCHEMA if quiz_type == QuizAttempt.QuizType.NORMAL else ADVANCED_QUIZ_SCHEMA
+    schema = (
+        NORMAL_QUIZ_SCHEMA
+        if quiz_type == QuizAttempt.QuizType.NORMAL
+        else ADVANCED_QUIZ_SCHEMA
+    )
     difficulty_note = (
         "Make the questions at least twice as difficult as a normal quiz — "
         "this is an advanced quiz for learners who have studied the resource links."
@@ -1110,9 +1282,7 @@ def submit_quiz(attempt_id: int, answers: list[int]) -> QuizAttempt:
 
     questions = attempt.questions
     if len(answers) != len(questions):
-        raise ValueError(
-            f"Expected {len(questions)} answers, got {len(answers)}"
-        )
+        raise ValueError(f"Expected {len(questions)} answers, got {len(answers)}")
 
     correct_count = 0
     for i, (q, answer) in enumerate(zip(questions, answers)):
@@ -1145,7 +1315,10 @@ def submit_quiz(attempt_id: int, answers: list[int]) -> QuizAttempt:
         _earn_points(attempt.user, topic, earned_points)
 
         if attempt.quiz_type == QuizAttempt.QuizType.NORMAL:
-            if tp.status not in (TopicProgress.Status.PASSED, TopicProgress.Status.ADVANCED_PASSED):
+            if tp.status not in (
+                TopicProgress.Status.PASSED,
+                TopicProgress.Status.ADVANCED_PASSED,
+            ):
                 tp.status = TopicProgress.Status.PASSED
                 tp.completed_at = timezone.now()
                 tp.save(update_fields=["status", "completed_at"])

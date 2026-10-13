@@ -337,7 +337,7 @@ class CreateSubjectView(GenericAPIView):
         tags=["Learning"],
         summary="Create or resolve a subject by name",
         request=CreateSubjectSerializer,
-        responses={200: None, 201: None, 300: None, 400: None},
+        responses={200: None, 400: None},
     )
     def post(self, request):
         serializer = self.get_serializer(data=request.data)
@@ -351,7 +351,7 @@ class CreateSubjectView(GenericAPIView):
         if result.action == "narrow":
             return Response(
                 {"data": {"action": "narrow", "suggestion": result.suggestion}, "status": "success"},
-                status=status.HTTP_300_MULTIPLE_CHOICES,
+                status=status.HTTP_200_OK,
             )
 
         try:
