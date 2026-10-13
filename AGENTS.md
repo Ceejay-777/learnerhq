@@ -16,7 +16,8 @@ pytest                 # all tests (SQLite in-memory, no Postgres/Redis needed)
 pytest -v --cov        # verbose with coverage
 pytest apps/learning/tests/test_views.py -k "test_name"  # single test
 python manage.py migrate
-python manage.py runserver 8000
+python manage.py runserver 8000   # no SSE streaming
+DJANGO_SETTINGS_MODULE=config.settings.development uvicorn config.asgi:application --port 8000 --reload   # with SSE
 celery -A config worker -l info      # separate terminal
 celery -A config beat -l info        # separate terminal
 ```
@@ -31,6 +32,8 @@ celery -A config beat -l info        # separate terminal
 - **Custom DRF exception handler** (`apps/core/exceptions.py`) normalizes all errors to `{"detail": "...", "status": "error"}`.
 - **Auth**: JWT in HTTP-only cookies (`access_token`: 15min, `refresh_token`: 7 days). No `Authorization` header. Use `CookieJWTAuthentication`.
 - **Celery**: Beat schedule defined in `config/celery.py` via `on_after_finalize` (not `django_celery_beat` DB). Three periodic tasks.
+- **SSE (`django-eventstream`)**: `GET /api/events` streams per-user events (channel `user-<id>`; only the owner may read it, enforced by `apps/core/eventstream.py`; JWT cookie auth via `apps/core/middleware.py`). Celery tasks publish with `apps/learning/events.py` (`send_event`, cross-process via `EVENTSTREAM_REDIS`). The DB is the source of truth: events are not replayable, so clients must also `GET /subjects/<id>`.
+- **Roadmap generation is async**: `POST /subjects/create` enrolls immediately and queues `generate_roadmap_for_subject`; `Subject.roadmap_status` is `NOT_GENERATED|GENERATING|READY|FAILED`; `POST /subjects/<id>/roadmap/retry` retries.
 
 ## Test quirks
 
@@ -52,7 +55,7 @@ celery -A config beat -l info        # separate terminal
 ## Env & deploy
 
 - `.env.example` lists all required vars. `python-decouple` + `dotenv` load them.
-- Railway: 3 services (web/gunicorn, worker, beat) via `railway.json`.
+- Railway: 3 services (web/uvicorn ASGI, worker, beat) via `railway.json`. Web runs ASGI (not gunicorn/WSGI) because SSE streams are long-lived.
 - `Dockerfile` collects static via Whitenoise.
 - Sentry + HSTS + secure cookies in production settings.
 
