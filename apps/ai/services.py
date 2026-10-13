@@ -255,11 +255,10 @@ def generate_content(
     output_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Generate educational content. Returns validated dict."""
-    messages = build_generation_messages(prompt, system_instruction, output_schema)
-    result = _call_with_fallback(
-        "generate", messages, TOPIC_CONTENT_SCHEMA, "TopicContent"
-    )
-    _validate_shape(result, TOPIC_CONTENT_SCHEMA)
+    schema = output_schema or TOPIC_CONTENT_SCHEMA
+    messages = build_generation_messages(prompt, system_instruction, schema)
+    result = _call_with_fallback("generate", messages, schema, "GeneratedContent")
+    _validate_shape(result, schema)
     return result
 
 

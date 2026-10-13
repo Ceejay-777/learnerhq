@@ -154,6 +154,32 @@ def get_response_format(config_name: str, schema: dict, schema_name: str):
 # ---------------------------------------------------------------------------
 
 
+# Keywords the Gemini native SDK accepts in a response schema. Anything else
+# (minItems, maxItems, minimum, maximum, additionalProperties, ...) is rejected
+# with "Unknown field for Schema". Size and range limits stay in the prompt text
+# and in the caller's post-generation validators.
+_GEMINI_SCHEMA_KEYWORDS = frozenset(
+    {"type", "format", "description", "nullable", "enum", "items", "properties", "required"}
+)
+
+
+def sanitize_schema_for_gemini(schema: dict) -> dict:
+    """Return a copy of a JSON schema containing only Gemini-supported keywords."""
+    cleaned = {}
+    for key, value in schema.items():
+        if key not in _GEMINI_SCHEMA_KEYWORDS:
+            continue
+        if key == "properties":
+            cleaned[key] = {
+                name: sanitize_schema_for_gemini(sub) for name, sub in value.items()
+            }
+        elif key == "items" and isinstance(value, dict):
+            cleaned[key] = sanitize_schema_for_gemini(value)
+        else:
+            cleaned[key] = value
+    return cleaned
+
+
 def call_gemini_native(
     messages: list[dict],
     schema: dict,
@@ -169,10 +195,10 @@ def call_gemini_native(
 
     model_obj = genai.GenerativeModel(
         model_name=model,
-        system_instruction=system_msg,
+        system_instruction=system_msg or None,
         generation_config=genai.GenerationConfig(
             response_mime_type="application/json",
-            response_schema=schema,
+            response_schema=sanitize_schema_for_gemini(schema),
         ),
     )
     response = model_obj.generate_content(user_msg)

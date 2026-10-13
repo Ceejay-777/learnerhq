@@ -134,3 +134,38 @@ class TestReviewContent:
         result = review_content("Some content")
         assert result["overall_passed"] is False
         assert "all providers failed" in result["accuracy"]["note"].lower()
+
+
+class TestGenerateContent:
+    """generate_content must honor the caller's output_schema."""
+
+    ROADMAP_LIKE = {
+        "type": "object",
+        "properties": {"topics": {"type": "array", "items": {"type": "object"}}},
+        "required": ["topics"],
+    }
+
+    @patch("apps.ai.services._call_with_fallback")
+    def test_passes_caller_schema_to_provider(self, mock_fallback):
+        from apps.ai.services import generate_content
+        mock_fallback.return_value = {"topics": []}
+        generate_content("p", output_schema=self.ROADMAP_LIKE)
+        _, _, schema, _ = mock_fallback.call_args.args
+        assert schema is self.ROADMAP_LIKE
+
+    @patch("apps.ai.services._call_with_fallback")
+    def test_validates_against_caller_schema(self, mock_fallback):
+        from apps.ai.services import generate_content
+        from apps.learning.exceptions import GenerationError
+        # A topic-content-shaped response is wrong for a roadmap schema.
+        mock_fallback.return_value = {"summary": "s", "resource_links": []}
+        with pytest.raises(GenerationError):
+            generate_content("p", output_schema=self.ROADMAP_LIKE)
+
+    @patch("apps.ai.services._call_with_fallback")
+    def test_defaults_to_topic_content_schema(self, mock_fallback):
+        from apps.ai.prompts import TOPIC_CONTENT_SCHEMA
+        from apps.ai.services import generate_content
+        mock_fallback.return_value = {"summary": "s", "resource_links": []}
+        generate_content("p")
+        assert mock_fallback.call_args.args[2] is TOPIC_CONTENT_SCHEMA
