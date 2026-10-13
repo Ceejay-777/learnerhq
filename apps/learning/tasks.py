@@ -86,6 +86,49 @@ def review_content_for_topic(self, topic_id: int) -> None:
         )
 
 
+@shared_task(
+    bind=True,
+    name="learning.generate_roadmap_for_subject",
+    autoretry_for=(ProviderError,),
+    retry_backoff=True,
+    retry_backoff_max=300,
+    retry_jitter=True,
+    max_retries=3,
+)
+def generate_roadmap_for_subject(self, subject_id: int) -> None:
+    """Generate a subject's roadmap in the background.
+
+    The subject is already GENERATING (claimed by ``request_roadmap_generation``
+    before dispatch). Building is idempotent, so a redelivered task is harmless.
+    """
+    from .events import publish_roadmap_status
+    from .exceptions import GenerationError
+    from .models import Subject
+    from .services import build_roadmap, generate_initial_batch, set_roadmap_status
+
+    try:
+        subject = build_roadmap(subject_id)
+    except GenerationError:
+        sentry_sdk.capture_message(
+            f"Subject {subject_id}: roadmap validation failed after retries",
+            level="error",
+        )
+        set_roadmap_status(subject_id, Subject.RoadmapStatus.FAILED)
+        publish_roadmap_status(Subject.objects.get(id=subject_id))
+        return
+    except ProviderError:
+        # Re-raised so autoretry_for can retry; only on the last attempt do we
+        # also surface FAILED, because no further retry will update the state.
+        if self.request.retries >= self.max_retries:
+            set_roadmap_status(subject_id, Subject.RoadmapStatus.FAILED)
+            publish_roadmap_status(Subject.objects.get(id=subject_id))
+        raise
+
+    set_roadmap_status(subject_id, Subject.RoadmapStatus.READY)
+    publish_roadmap_status(subject)
+    generate_initial_batch(subject)
+
+
 @shared_task(name="learning.dispatch_notifications")
 def dispatch_notifications():
     from .services import get_due_notifications
@@ -172,9 +215,24 @@ def send_notification(self, user_subject_progress_id):
 
 @shared_task(name="learning.cleanup_stuck_generations")
 def cleanup_stuck_generations() -> None:
-    from .models import Topic
+    from .events import publish_roadmap_status
+    from .models import Subject, Topic
 
     cutoff = timezone.now() - timedelta(hours=1)
+
+    # A roadmap stuck in GENERATING (worker died, task lost) is surfaced as
+    # FAILED so the user can retry, rather than waiting on it forever.
+    stuck_subjects = list(
+        Subject.objects.filter(
+            roadmap_status=Subject.RoadmapStatus.GENERATING,
+            roadmap_started_at__lt=cutoff,
+        )
+    )
+    for subject in stuck_subjects:
+        Subject.objects.filter(id=subject.id).update(
+            roadmap_status=Subject.RoadmapStatus.FAILED
+        )
+        publish_roadmap_status(subject)
 
     Topic.objects.filter(
         content_status=Topic.ContentStatus.GENERATING,

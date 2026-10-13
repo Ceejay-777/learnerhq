@@ -18,6 +18,7 @@ from .serializers import (
     NotificationStatusSerializer,
     OthersLearningEntrySerializer,
     ResourceLinksViewedResponseSerializer,
+    RoadmapStatusResponseSerializer,
     SubjectDetailSerializer,
     SubjectPreviewSerializer,
     SubjectSuggestionSerializer,
@@ -29,6 +30,7 @@ from .serializers import (
 from .services import (
     _generate_subject_suggestions,
     add_subject_to_user,
+    check_enrollment_capacity,
     resolve_or_create_subject,
     check_level_progress,
     explore_subjects,
@@ -40,6 +42,7 @@ from .services import (
     mark_subject_interest,
     others_learning,
     remove_subject_interest,
+    retry_roadmap,
     set_notification_frequency,
     submit_quiz,
     topic_leaderboard,
@@ -124,7 +127,10 @@ class AddSubjectView(GenericAPIView):
             add_subject_to_user(request.user, subject)
         except ValueError as e:
             return Response({"detail": str(e), "status": "error"}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"data": {}, "status": "success"}, status=status.HTTP_201_CREATED)
+        return Response(
+            {"data": {"roadmap_status": subject.roadmap_status}, "status": "success"},
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class RemoveSubjectView(GenericAPIView):
@@ -346,6 +352,11 @@ class CreateSubjectView(GenericAPIView):
         if not name:
             return Response({"detail": "Name is required.", "status": "error"}, status=status.HTTP_400_BAD_REQUEST)
 
+        try:
+            check_enrollment_capacity(request.user, name)
+        except ValueError as e:
+            return Response({"detail": str(e), "status": "error"}, status=status.HTTP_400_BAD_REQUEST)
+
         result = resolve_or_create_subject(name)
 
         if result.action == "narrow":
@@ -363,7 +374,11 @@ class CreateSubjectView(GenericAPIView):
             {
                 "data": {
                     "action": "resolved",
-                    "subject": {"id": result.subject.id, "name": result.subject.name},
+                    "subject": {
+                        "id": result.subject.id,
+                        "name": result.subject.name,
+                        "roadmap_status": result.subject.roadmap_status,
+                    },
                 },
                 "status": "success",
             },
@@ -457,6 +472,7 @@ class EnrolledSubjectsView(GenericAPIView):
                 "created_at": usp.created_at,
                 "notification_frequency_hours": usp.notification_frequency_hours,
                 "next_due_at": usp.next_due_at,
+                "roadmap_status": usp.subject.roadmap_status,
             })
         return Response({"data": results, "status": "success"})
 
@@ -485,11 +501,29 @@ class SubjectDetailView(GenericAPIView):
                 "created_at": result.created_at,
                 "notification_frequency_hours": result.notification_frequency_hours,
                 "next_due_at": result.next_due_at,
+                "roadmap_status": result.roadmap_status,
                 "levels": result.levels,
                 "topics": result.topics,
             },
             "status": "success",
         })
+
+
+class RetryRoadmapView(GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["Learning"],
+        summary="Retry roadmap generation for an enrolled subject",
+        request=None,
+        responses={200: RoadmapStatusResponseSerializer, 404: None},
+    )
+    def post(self, request, subject_id):
+        try:
+            subject = retry_roadmap(request.user, subject_id)
+        except UserSubjectProgress.DoesNotExist:
+            return Response({"detail": "Not found.", "status": "error"}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"data": {"roadmap_status": subject.roadmap_status}, "status": "success"})
 
 
 class SubjectPreviewView(GenericAPIView):

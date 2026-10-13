@@ -8,10 +8,22 @@ class Subject(models.Model):
         ACTIVE = "ACTIVE", "Active"
         ARCHIVED = "ARCHIVED", "Archived"
 
+    class RoadmapStatus(models.TextChoices):
+        NOT_GENERATED = "NOT_GENERATED", "Not Generated"
+        GENERATING = "GENERATING", "Generating"
+        READY = "READY", "Ready"
+        FAILED = "FAILED", "Failed"
+
     name = models.CharField(max_length=255, unique=True)
     status = models.CharField(
         max_length=16, choices=Status.choices, default=Status.ACTIVE
     )
+    roadmap_status = models.CharField(
+        max_length=16,
+        choices=RoadmapStatus.choices,
+        default=RoadmapStatus.NOT_GENERATED,
+    )
+    roadmap_started_at = models.DateTimeField(null=True, blank=True)
     embedding = HalfVectorField(dimensions=3072, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

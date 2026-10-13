@@ -5,10 +5,11 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 from django.contrib.auth import get_user_model
-from django.db import connection, models, transaction
+from django.db import IntegrityError, connection, models, transaction
 from django.db.models import Count, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
+from kombu.exceptions import OperationalError as BrokerOperationalError
 
 from apps.ai.exceptions import ProviderError
 from apps.ai.services import (
@@ -26,6 +27,11 @@ from .models import (
     TopicProgress,
     UserInterest,
     UserSubjectProgress,
+)
+
+SUBJECT_LIMIT_MESSAGE = (
+    "You've reached the limit of 5 active subjects. "
+    "Remove one or complete a subject to add a new one."
 )
 
 
@@ -57,6 +63,7 @@ class SubjectDetailResult:
     created_at: datetime
     notification_frequency_hours: int
     next_due_at: datetime | None
+    roadmap_status: str
     levels: list[dict]
     topics: list[dict]
 
@@ -102,6 +109,40 @@ def _find_similar_subjects(query_vector: list[float]) -> list[dict]:
     ]
 
 
+def _get_or_create_subject(name: str) -> Subject:
+    """Return the subject called ``name`` (case-insensitive), creating it if needed.
+
+    The LLM may standardize a new input to the name of an existing subject, and
+    two requests can race to create the same one, so a plain ``create`` would
+    hit the unique constraint.
+    """
+    existing = Subject.objects.filter(name__iexact=name).first()
+    if existing is not None:
+        return existing
+    try:
+        with transaction.atomic():
+            subject = Subject.objects.create(name=name)
+            _compute_and_store_embedding(subject, name)
+        return subject
+    except IntegrityError:
+        return Subject.objects.get(name__iexact=name)
+
+
+def check_enrollment_capacity(user, raw_name: str) -> None:
+    """Fail fast, before any AI work, if the user has no free subject slot.
+
+    A name the user is already enrolled in is allowed through: resolving it is
+    an idempotent no-op that needs no new slot.
+    """
+    if get_available_slots(user) > 0:
+        return
+    if UserSubjectProgress.objects.filter(
+        user=user, subject__name__iexact=raw_name
+    ).exists():
+        return
+    raise ValueError(SUBJECT_LIMIT_MESSAGE)
+
+
 def resolve_or_create_subject(raw_input: str) -> ResolveResult | NarrowResult:
     existing = Subject.objects.filter(name__iexact=raw_input).first()
     if existing is not None:
@@ -120,11 +161,7 @@ def resolve_or_create_subject(raw_input: str) -> ResolveResult | NarrowResult:
             )
             
         standardized_name = llm_result["standardized_name"]
-        
-        with transaction.atomic():
-            subject = Subject.objects.create(name=standardized_name)
-            _compute_and_store_embedding(subject, standardized_name)
-            
+        subject = _get_or_create_subject(standardized_name)
         return ResolveResult(action="resolve", subject=subject)
 
     result = rank_or_resolve(raw_input, candidates)
@@ -136,9 +173,7 @@ def resolve_or_create_subject(raw_input: str) -> ResolveResult | NarrowResult:
 
     if action == "create":
         standardized_name = result["standardized_name"]
-        with transaction.atomic():
-            subject = Subject.objects.create(name=standardized_name)
-            _compute_and_store_embedding(subject, standardized_name)
+        subject = _get_or_create_subject(standardized_name)
         return ResolveResult(action="resolve", subject=subject)
 
     if action == "narrow":
@@ -618,6 +653,7 @@ def get_subject_detail(user, subject_id: int) -> SubjectDetailResult:
         created_at=usp.created_at,
         notification_frequency_hours=usp.notification_frequency_hours,
         next_due_at=usp.next_due_at,
+        roadmap_status=usp.subject.roadmap_status,
         levels=levels,
         topics=topics_data,
     )
@@ -693,6 +729,9 @@ def check_level_progress(user, subject) -> LevelCheckResult:
     current_level = usp.level_unlocked
     level_topics = Topic.objects.filter(subject=subject, level=current_level)
     total = level_topics.count()
+    if total == 0:
+        # Roadmap not generated yet (or failed); there is nothing to complete.
+        return LevelCheckResult(action="none")
     completed = TopicProgress.objects.filter(
         user=user,
         topic__subject=subject,
@@ -737,21 +776,81 @@ def get_available_slots(user) -> int:
     return max(0, 5 - active_count)
 
 
+def claim_roadmap_generation(subject_id: int) -> bool:
+    """Atomically move a subject to GENERATING; True only for the caller that won."""
+    claimed = Subject.objects.filter(
+        id=subject_id,
+        roadmap_status__in=[
+            Subject.RoadmapStatus.NOT_GENERATED,
+            Subject.RoadmapStatus.FAILED,
+        ],
+    ).update(
+        roadmap_status=Subject.RoadmapStatus.GENERATING,
+        roadmap_started_at=timezone.now(),
+    )
+    return claimed > 0
+
+
+def set_roadmap_status(subject_id: int, status: str) -> None:
+    Subject.objects.filter(id=subject_id).update(roadmap_status=status)
+
+
+def request_roadmap_generation(subject: Subject) -> bool:
+    """Start background roadmap generation unless it is already running.
+
+    Returns True when this call started it. Safe to call repeatedly.
+    """
+    from .events import publish_roadmap_status
+    from .tasks import generate_roadmap_for_subject
+
+    if not claim_roadmap_generation(subject.id):
+        subject.refresh_from_db(fields=["roadmap_status"])
+        return False
+    try:
+        generate_roadmap_for_subject.delay(subject.id)
+    except BrokerOperationalError:
+        # Nothing will run; surface FAILED so the user can retry instead of
+        # leaving the subject stuck in GENERATING.
+        set_roadmap_status(subject.id, Subject.RoadmapStatus.FAILED)
+        publish_roadmap_status(subject)
+        return False
+    subject.refresh_from_db(fields=["roadmap_status"])
+    return True
+
+
+def build_roadmap(subject_id: int) -> Subject:
+    """Generate and save the roadmap unless topics already exist (idempotent)."""
+    subject = Subject.objects.get(id=subject_id)
+    if not Topic.objects.filter(subject=subject).exists():
+        generate_roadmap(subject)
+    return subject
+
+
+def retry_roadmap(user, subject_id: int) -> Subject:
+    """Re-run roadmap generation for a subject the user is enrolled in."""
+    usp = UserSubjectProgress.objects.select_related("subject").get(
+        user=user, subject_id=subject_id
+    )
+    subject = usp.subject
+    if not Topic.objects.filter(subject=subject).exists():
+        request_roadmap_generation(subject)
+    return subject
+
+
 def add_subject_to_user(user, subject) -> UserSubjectProgress:
     existing = UserSubjectProgress.objects.filter(user=user, subject=subject).first()
     if existing is not None:
         return existing
 
     if get_available_slots(user) == 0:
-        raise ValueError(
-            "You've reached the limit of 5 active subjects. Remove one or complete a subject to add a new one."
-        )
-
-    if not Topic.objects.filter(subject=subject).exists():
-        generate_roadmap(subject)
-        generate_initial_batch(subject)
+        raise ValueError(SUBJECT_LIMIT_MESSAGE)
 
     usp = UserSubjectProgress.objects.create(user=user, subject=subject)
+
+    # Roadmap generation is slow, so it runs in the background; the user is
+    # enrolled right away and follows progress via roadmap_status / SSE.
+    if not Topic.objects.filter(subject=subject).exists():
+        request_roadmap_generation(subject)
 
     UserSubjectProgress.objects.filter(
         user=user,

@@ -125,6 +125,10 @@ class CreateSubjectSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=200, help_text="Subject name to create or resolve.")
 
 
+class RoadmapStatusResponseSerializer(serializers.Serializer):
+    roadmap_status = serializers.CharField(help_text="Roadmap generation status: NOT_GENERATED, GENERATING, READY or FAILED.")
+
+
 class TopicDetailSerializer(serializers.Serializer):
     id = serializers.IntegerField(help_text="Topic ID.")
     title = serializers.CharField(help_text="Topic title.")
@@ -151,6 +155,7 @@ class EnrolledSubjectListSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField(help_text="When the user enrolled.")
     notification_frequency_hours = serializers.IntegerField(help_text="Notification interval in hours (1-24).")
     next_due_at = serializers.DateTimeField(allow_null=True, help_text="Next scheduled notification, or null.")
+    roadmap_status = serializers.CharField(help_text="Roadmap generation status: NOT_GENERATED, GENERATING, READY or FAILED.")
 
 
 class SubjectTopicProgressSerializer(serializers.Serializer):
@@ -182,6 +187,7 @@ class SubjectDetailSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField(help_text="When the user enrolled.")
     notification_frequency_hours = serializers.IntegerField(help_text="Notification interval in hours.")
     next_due_at = serializers.DateTimeField(allow_null=True, help_text="Next scheduled notification, or null.")
+    roadmap_status = serializers.CharField(help_text="Roadmap generation status: NOT_GENERATED, GENERATING, READY or FAILED.")
     levels = SubjectDetailLevelSerializer(many=True, help_text="Per-level progress rollups.")
     topics = SubjectTopicProgressSerializer(many=True, help_text="Full topic roadmap with per-user progress.")
 
