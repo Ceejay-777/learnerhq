@@ -45,6 +45,7 @@ from .services import (
     retry_roadmap,
     set_notification_frequency,
     submit_quiz,
+    subject_leaderboard,
     topic_leaderboard,
 )
 
@@ -232,6 +233,19 @@ class LeaderboardView(GenericAPIView):
     )
     def get(self, request):
         data = global_leaderboard()
+        return Response({"data": data, "status": "success"})
+
+
+class SubjectLeaderboardView(GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["Learning"],
+        summary="Subject leaderboard (top 20 by points in this subject)",
+        responses={200: TopicLeaderboardEntrySerializer(many=True)},
+    )
+    def get(self, request, subject_id):
+        data = subject_leaderboard(subject_id)
         return Response({"data": data, "status": "success"})
 
 
@@ -532,6 +546,7 @@ class SubjectDetailView(GenericAPIView):
                 "notification_frequency_hours": result.notification_frequency_hours,
                 "next_due_at": result.next_due_at,
                 "roadmap_status": result.roadmap_status,
+                "percent_complete": result.percent_complete,
                 "levels": result.levels,
                 "topics": result.topics,
             },

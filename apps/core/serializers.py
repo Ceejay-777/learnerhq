@@ -108,6 +108,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
+            "id",
             "email",
             "display_name",
             "avatar",
@@ -115,7 +116,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "preferences",
             "date_joined",
         ]
-        read_only_fields = ["email", "date_joined", "preferences"]
+        read_only_fields = ["id", "email", "date_joined", "preferences"]
         extra_kwargs = {
             "display_name": {
                 "help_text": "Display name shown on leaderboard and to other learners."

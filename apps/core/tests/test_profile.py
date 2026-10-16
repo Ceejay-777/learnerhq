@@ -16,6 +16,7 @@ class TestProfile:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data['data']['email'] == 'user@example.com'
+        assert data['data']['id'] == user.id
         assert 'password' not in data['data']
 
     def test_retrieve_profile_unauthenticated(self):

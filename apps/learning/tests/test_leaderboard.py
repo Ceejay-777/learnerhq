@@ -323,3 +323,29 @@ class TestLeaderboardAPI:
         data = resp.json()["data"]
         assert len(data) == 1
         assert data[0]["display_name"] == "Bob"
+
+
+@pytest.mark.django_db
+class TestSubjectLeaderboardAndDetail:
+
+    def test_subject_leaderboard_ranks_by_subject_points_and_hides_opt_outs(self, auth_client, user, subject):
+        hidden = User.objects.create_user(email="h@b.com", password="p")
+        hidden.preferences.leaderboard_visible = False
+        hidden.preferences.save()
+        UserSubjectProgress.objects.create(user=user, subject=subject, points=50)
+        UserSubjectProgress.objects.create(user=hidden, subject=subject, points=90)
+
+        resp = auth_client.get(f"/api/learning/subjects/{subject.id}/leaderboard")
+
+        assert resp.status_code == status.HTTP_200_OK
+        rows = resp.json()["data"]
+        assert [(r["user_id"], r["points"]) for r in rows] == [(user.id, 50)]
+
+    def test_detail_percent_complete_matches_list(self, auth_client, user, subject, topic, topic2):
+        UserSubjectProgress.objects.create(user=user, subject=subject)
+        TopicProgress.objects.create(user=user, topic=topic, status=TopicProgress.Status.PASSED)
+
+        detail = auth_client.get(f"/api/learning/subjects/{subject.id}").json()["data"]
+        listed = auth_client.get("/api/learning/subjects").json()["data"][0]
+
+        assert detail["percent_complete"] == listed["percent_complete"] == 50
