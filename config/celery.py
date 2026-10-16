@@ -6,6 +6,8 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', os.environ.get('DJANGO_SETTINGS_
 app = Celery('learnerhq')
 app.config_from_object('django.conf:settings', namespace='CELERY')
 app.autodiscover_tasks()
+# config.utils isn't an installed app, so its tasks.py needs listing explicitly.
+app.autodiscover_tasks(['config.utils'])
 
 
 @app.on_after_finalize.connect
