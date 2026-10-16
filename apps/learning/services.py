@@ -862,8 +862,13 @@ def add_subject_to_user(user, subject) -> UserSubjectProgress:
     return usp
 
 
-def explore_subjects(user, limit: int | None = None) -> list[dict]:
-    """Subjects the user is not enrolled in (active or completed), most popular first."""
+def explore_subjects(
+    user, limit: int | None = None, interested_only: bool = False
+) -> list[dict]:
+    """Subjects the user is not enrolled in (active or completed), most popular first.
+
+    interested_only keeps just the starred ones, filtered before the limit slice.
+    """
     interest_ids = set(
         UserInterest.objects.filter(user=user).values_list("subject_id", flat=True)
     )
@@ -882,6 +887,8 @@ def explore_subjects(user, limit: int | None = None) -> list[dict]:
         .filter(topic_count__gt=0)
         .order_by("-enrollment_count", "name")
     )
+    if interested_only:
+        subjects = subjects.filter(id__in=interest_ids)
 
     return [
         {
