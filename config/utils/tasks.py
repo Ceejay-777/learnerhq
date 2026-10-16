@@ -1,3 +1,5 @@
+from urllib.parse import urlencode
+
 import sentry_sdk
 from celery import shared_task
 from django.conf import settings
@@ -16,8 +18,8 @@ from config.utils.email_service import EmailSendError
 )
 def send_password_reset_email(self, user_email: str, token: str) -> None:
     from config.utils.email_notifications import send_password_reset_email as send_email
-    from django.urls import reverse
-    reset_link = f"{settings.SERVICE_BASE_URL}{reverse('confirm-password-reset')}?token={token}&email={user_email}"
+    # u = email, s = token; urlencode keeps characters like "+" in addresses intact.
+    reset_link = f"{settings.FRONTEND_URL}/reset-password?{urlencode({'u': user_email, 's': token})}"
     try:
         send_email(user_email, reset_link)
     except EmailSendError:

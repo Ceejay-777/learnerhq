@@ -151,3 +151,48 @@ class TestPasswordResetConfirm:
             'password': 'NewStrongPass456',
         }, format='json')
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.django_db
+class TestResetLinkAndSessions:
+
+    @mock.patch('config.utils.email_notifications.send_text_email')
+    def test_link_targets_frontend_with_encoded_u_and_s(self, mock_send, settings):
+        from urllib.parse import parse_qs, urlsplit
+        from config.utils.tasks import send_password_reset_email
+
+        settings.FRONTEND_URL = 'https://app.example.com'
+        send_password_reset_email('a+b@example.com', 'tok')
+        link = next(w for w in mock_send.call_args.kwargs['body'].split() if w.startswith('http'))
+        parts = urlsplit(link)
+        assert f'{parts.scheme}://{parts.netloc}{parts.path}' == 'https://app.example.com/reset-password'
+        assert parse_qs(parts.query) == {'u': ['a+b@example.com'], 's': ['tok']}
+
+    def test_reset_invalidates_other_pending_tokens(self):
+        User = get_user_model()
+        user = User.objects.create_user(email='user@example.com', password='StrongPass123')
+        used = PasswordResetToken.objects.create(user=user)
+        other = PasswordResetToken.objects.create(user=user)
+        APIClient().post('/api/auth/password-reset/confirm', {
+            'email': 'user@example.com', 'token': used.token, 'password': 'NewStrongPass456',
+        }, format='json')
+        assert not PasswordResetToken.objects.filter(pk=other.pk).exists()
+
+    def test_reset_revokes_existing_sessions(self):
+        client = APIClient()
+        client.post('/api/auth/signup', {
+            'email': 'user@example.com', 'password': 'StrongPass123', 'display_name': 'U',
+        }, format='json')
+        old_cookies = {k: v.value for k, v in client.cookies.items()}
+        assert client.get('/api/auth/profile').status_code == 200
+
+        user = get_user_model().objects.get(email='user@example.com')
+        token = PasswordResetToken.objects.create(user=user)
+        APIClient().post('/api/auth/password-reset/confirm', {
+            'email': 'user@example.com', 'token': token.token, 'password': 'NewStrongPass456',
+        }, format='json')
+
+        stale = APIClient()
+        stale.cookies.load(old_cookies)
+        assert stale.get('/api/auth/profile').status_code == 401
+        assert stale.post('/api/auth/refresh').status_code == 401

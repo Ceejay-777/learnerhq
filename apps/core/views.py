@@ -5,7 +5,10 @@ from rest_framework import serializers as drf_serializers, status
 from rest_framework.generics import GenericAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.utils import get_md5_hash_password
 
 from .serializers import (
     SignUpSerializer,
@@ -146,6 +149,8 @@ class RefreshTokenView(GenericAPIView):
         try:
             refresh = RefreshToken(refresh_token_value)
             user = User.objects.get(id=refresh.payload.get('user_id'))
+            if refresh.get(api_settings.REVOKE_TOKEN_CLAIM) != get_md5_hash_password(user.password):
+                raise TokenError("Password changed.")
             response = Response({
                 "detail": "Token refreshed.",
                 "status": "success",

@@ -17,7 +17,7 @@ def set_password_with_token(email, token_str, new_password):
         raise ValueError("Reset token has expired")
     user.set_password(new_password)
     user.save(update_fields=["password"])
-    token.delete()
+    PasswordResetToken.objects.filter(user=user).delete()
 
 
 def create_password_reset_token(user):

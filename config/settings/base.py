@@ -184,6 +184,10 @@ EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
 # Must be a sender verified in Brevo; Django's default (webmaster@localhost) is rejected.
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL") or "webmaster@localhost"
 SERVICE_BASE_URL = os.environ.get("SERVICE_BASE_URL", "http://localhost:8000")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000").rstrip("/")
+
+# Tokens carry a hash of the password, so changing it revokes all earlier sessions.
+SIMPLE_JWT = {"CHECK_REVOKE_TOKEN": True}
 
 # Server-sent events (django-eventstream). Channels are per-user and only the
 # owner may read them. EVENTSTREAM_REDIS lets Celery workers publish events to
