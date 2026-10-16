@@ -254,21 +254,35 @@ class TestExploreSubjects:
         assert len(results) == 1
         assert results[0]["name"] == "HasTopics"
 
-    def test_annotates_enrollment(self, user):
-        s = Subject.objects.create(name="S1")
-        Topic.objects.create(subject=s, title="T1", level=1, order=1)
-        UserSubjectProgress.objects.create(user=user, subject=s)
-        results = explore_subjects(user)
-        assert results[0]["is_enrolled"] is True
-
-    def test_annotates_completed(self, user):
-        s = Subject.objects.create(name="S1")
-        Topic.objects.create(subject=s, title="T1", level=1, order=1)
+    def test_excludes_enrolled_and_completed(self, user):
+        s1 = Subject.objects.create(name="Active")
+        s2 = Subject.objects.create(name="Done")
+        s3 = Subject.objects.create(name="Open")
+        for s in (s1, s2, s3):
+            Topic.objects.create(subject=s, title="T", level=1, order=1)
+        UserSubjectProgress.objects.create(user=user, subject=s1)
         UserSubjectProgress.objects.create(
-            user=user, subject=s, status=UserSubjectProgress.Status.COMPLETED,
+            user=user, subject=s2, status=UserSubjectProgress.Status.COMPLETED,
+        )
+        assert [r["name"] for r in explore_subjects(user)] == ["Open"]
+
+    def test_topic_count_and_enrollment_not_inflated(self, user):
+        s = Subject.objects.create(name="S1")
+        for i in range(3):
+            Topic.objects.create(subject=s, title=f"T{i}", level=1, order=i)
+        UserSubjectProgress.objects.create(
+            user=User.objects.create_user(email="c@c.com", password="p"), subject=s,
         )
         results = explore_subjects(user)
-        assert results[0]["is_completed"] is True
+        assert len(results) == 1
+        assert results[0]["topic_count"] == 3
+        assert results[0]["enrollment_count"] == 1
+
+    def test_limit(self, user):
+        for i in range(3):
+            s = Subject.objects.create(name=f"S{i}")
+            Topic.objects.create(subject=s, title="T", level=1, order=1)
+        assert len(explore_subjects(user, limit=2)) == 2
 
     def test_annotates_interest(self, user):
         s = Subject.objects.create(name="S1")

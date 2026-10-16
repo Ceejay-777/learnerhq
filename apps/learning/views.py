@@ -82,7 +82,12 @@ class ExploreSubjectsView(GenericAPIView):
         responses={200: ExploreSubjectSerializer(many=True)},
     )
     def get(self, request):
-        results = explore_subjects(request.user)
+        limit = request.query_params.get("limit")
+        if limit is not None:
+            if not limit.isdigit() or int(limit) < 1:
+                raise serializers.ValidationError({"limit": "Must be a positive integer."})
+            limit = min(int(limit), 50)
+        results = explore_subjects(request.user, limit=limit)
         return Response({"data": results, "status": "success"})
 
 
@@ -422,8 +427,22 @@ class EnrolledSubjectsView(GenericAPIView):
         responses={200: EnrolledSubjectListSerializer(many=True)},
     )
     def get(self, request):
-        from django.db.models import Count, Q
+        from django.db.models import Count, OuterRef, Q, Subquery
         from math import floor
+
+        # "Current" = first unpassed topic in an unlocked level.
+        current = (
+            Topic.objects
+            .filter(subject=OuterRef("subject"), level__lte=OuterRef("level_unlocked"))
+            .exclude(
+                user_progress__user=request.user,
+                user_progress__status__in=[
+                    TopicProgress.Status.PASSED,
+                    TopicProgress.Status.ADVANCED_PASSED,
+                ],
+            )
+            .order_by("order")
+        )
 
         usps = (
             UserSubjectProgress.objects
@@ -450,6 +469,8 @@ class EnrolledSubjectsView(GenericAPIView):
                     ),
                     distinct=True,
                 ),
+                current_topic_id=Subquery(current.values("id")[:1]),
+                current_topic_title=Subquery(current.values("title")[:1]),
             )
             .order_by("-created_at")
         )
@@ -473,6 +494,10 @@ class EnrolledSubjectsView(GenericAPIView):
                 "notification_frequency_hours": usp.notification_frequency_hours,
                 "next_due_at": usp.next_due_at,
                 "roadmap_status": usp.subject.roadmap_status,
+                "current_topic": (
+                    {"id": usp.current_topic_id, "title": usp.current_topic_title}
+                    if usp.current_topic_id is not None else None
+                ),
             })
         return Response({"data": results, "status": "success"})
 

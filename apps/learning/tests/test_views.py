@@ -85,14 +85,55 @@ class TestExploreSubjectsView:
         resp = client.get("/api/learning/explore")
         assert resp.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_annotates_user_state(self, auth_client, user, subject):
-        UserSubjectProgress.objects.create(user=user, subject=subject)
+    def test_annotates_interest(self, auth_client, user, subject):
         UserInterest.objects.create(user=user, subject=subject)
-        resp = auth_client.get("/api/learning/explore")
-        data = resp.json()["data"]
+        data = auth_client.get("/api/learning/explore").json()["data"]
         entry = next(s for s in data if s["id"] == subject.id)
-        assert entry["is_enrolled"] is True
         assert entry["is_interested"] is True
+
+    def test_hides_enrolled(self, auth_client, user, subject):
+        UserSubjectProgress.objects.create(user=user, subject=subject)
+        data = auth_client.get("/api/learning/explore").json()["data"]
+        assert all(s["id"] != subject.id for s in data)
+
+    @pytest.mark.parametrize("bad", ["0", "-1", "abc"])
+    def test_rejects_bad_limit(self, auth_client, bad):
+        resp = auth_client.get(f"/api/learning/explore?limit={bad}")
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_limit(self, auth_client, subject):
+        assert len(auth_client.get("/api/learning/explore?limit=1").json()["data"]) == 1
+
+
+@pytest.mark.django_db
+class TestEnrolledSubjectsCurrentTopic:
+
+    def _get(self, auth_client, subject):
+        data = auth_client.get("/api/learning/subjects").json()["data"]
+        return next(s for s in data if s["id"] == subject.id)["current_topic"]
+
+    def test_first_unpassed_unlocked_topic(self, auth_client, user):
+        s = Subject.objects.create(name="CT")
+        t1 = Topic.objects.create(subject=s, title="A", level=1, order=1)
+        t2 = Topic.objects.create(subject=s, title="B", level=1, order=2)
+        Topic.objects.create(subject=s, title="Locked", level=2, order=3)
+        UserSubjectProgress.objects.create(user=user, subject=s)
+        assert self._get(auth_client, s) == {"id": t1.id, "title": "A"}
+        TopicProgress.objects.create(user=user, topic=t1, status=TopicProgress.Status.PASSED)
+        assert self._get(auth_client, s) == {"id": t2.id, "title": "B"}
+
+    def test_null_when_unlocked_topics_all_passed(self, auth_client, user):
+        s = Subject.objects.create(name="CT2")
+        t1 = Topic.objects.create(subject=s, title="A", level=1, order=1)
+        Topic.objects.create(subject=s, title="Locked", level=2, order=2)
+        UserSubjectProgress.objects.create(user=user, subject=s)
+        TopicProgress.objects.create(user=user, topic=t1, status=TopicProgress.Status.ADVANCED_PASSED)
+        assert self._get(auth_client, s) is None
+
+    def test_null_without_topics(self, auth_client, user):
+        s = Subject.objects.create(name="CT3")
+        UserSubjectProgress.objects.create(user=user, subject=s)
+        assert self._get(auth_client, s) is None
 
 
 @pytest.mark.django_db

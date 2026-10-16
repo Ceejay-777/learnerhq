@@ -862,30 +862,24 @@ def add_subject_to_user(user, subject) -> UserSubjectProgress:
     return usp
 
 
-def explore_subjects(user) -> list[dict]:
-    enrolled_ids = set(
-        UserSubjectProgress.objects.filter(user=user).values_list(
-            "subject_id", flat=True
-        )
-    )
-    completed_ids = set(
-        UserSubjectProgress.objects.filter(
-            user=user,
-            status=UserSubjectProgress.Status.COMPLETED,
-        ).values_list("subject_id", flat=True)
-    )
+def explore_subjects(user, limit: int | None = None) -> list[dict]:
+    """Subjects the user is not enrolled in (active or completed), most popular first."""
     interest_ids = set(
         UserInterest.objects.filter(user=user).values_list("subject_id", flat=True)
     )
 
+    # distinct=True: both counts span joins, so without it they multiply each other.
     subjects = (
-        Subject.objects.filter(topics__isnull=False)
+        Subject.objects.exclude(user_progress__user=user)
         .annotate(
+            topic_count=Count("topics", distinct=True),
             enrollment_count=Count(
                 "user_progress",
                 filter=Q(user_progress__status=UserSubjectProgress.Status.ACTIVE),
+                distinct=True,
             ),
         )
+        .filter(topic_count__gt=0)
         .order_by("-enrollment_count", "name")
     )
 
@@ -893,12 +887,11 @@ def explore_subjects(user) -> list[dict]:
         {
             "id": s.id,
             "name": s.name,
+            "topic_count": s.topic_count,
             "enrollment_count": s.enrollment_count,
-            "is_enrolled": s.id in enrolled_ids,
-            "is_completed": s.id in completed_ids,
             "is_interested": s.id in interest_ids,
         }
-        for s in subjects
+        for s in subjects[:limit]
     ]
 
 

@@ -40,9 +40,8 @@ class LevelCheckResponseSerializer(serializers.Serializer):
 class ExploreSubjectSerializer(serializers.Serializer):
     id = serializers.IntegerField(help_text="Subject ID.")
     name = serializers.CharField(help_text="Subject name.")
+    topic_count = serializers.IntegerField(help_text="Number of topics in the roadmap.")
     enrollment_count = serializers.IntegerField(help_text="Number of active learners.")
-    is_enrolled = serializers.BooleanField(help_text="Whether the current user is enrolled.")
-    is_completed = serializers.BooleanField(help_text="Whether the current user has completed this subject.")
     is_interested = serializers.BooleanField(help_text="Whether the current user has marked interest.")
 
 
@@ -142,6 +141,11 @@ class TopicDetailSerializer(serializers.Serializer):
     subject_name = serializers.CharField(help_text="Parent subject name.")
 
 
+class CurrentTopicSerializer(serializers.Serializer):
+    id = serializers.IntegerField(help_text="Topic ID.")
+    title = serializers.CharField(help_text="Topic title.")
+
+
 class EnrolledSubjectListSerializer(serializers.Serializer):
     id = serializers.IntegerField(help_text="Subject ID.")
     name = serializers.CharField(help_text="Subject name.")
@@ -156,6 +160,10 @@ class EnrolledSubjectListSerializer(serializers.Serializer):
     notification_frequency_hours = serializers.IntegerField(help_text="Notification interval in hours (1-24).")
     next_due_at = serializers.DateTimeField(allow_null=True, help_text="Next scheduled notification, or null.")
     roadmap_status = serializers.CharField(help_text="Roadmap generation status: NOT_GENERATED, GENERATING, READY or FAILED.")
+    current_topic = CurrentTopicSerializer(
+        allow_null=True,
+        help_text="First unpassed topic in an unlocked level, or null if none.",
+    )
 
 
 class SubjectTopicProgressSerializer(serializers.Serializer):
