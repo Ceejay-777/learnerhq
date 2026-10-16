@@ -87,7 +87,12 @@ class ExploreSubjectsView(GenericAPIView):
             if not limit.isdigit() or int(limit) < 1:
                 raise serializers.ValidationError({"limit": "Must be a positive integer."})
             limit = min(int(limit), 50)
-        results = explore_subjects(request.user, limit=limit)
+        interested = request.query_params.get("interested")
+        if interested not in (None, "true", "false"):
+            raise serializers.ValidationError({"interested": "Must be 'true' or 'false'."})
+        results = explore_subjects(
+            request.user, limit=limit, interested_only=interested == "true"
+        )
         return Response({"data": results, "status": "success"})
 
 

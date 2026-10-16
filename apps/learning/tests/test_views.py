@@ -104,6 +104,17 @@ class TestExploreSubjectsView:
     def test_limit(self, auth_client, subject):
         assert len(auth_client.get("/api/learning/explore?limit=1").json()["data"]) == 1
 
+    def test_interested_filter(self, auth_client, user, subject):
+        other = Subject.objects.create(name="Other")
+        Topic.objects.create(subject=other, title="T", level=1, order=1)
+        UserInterest.objects.create(user=user, subject=subject)
+        data = auth_client.get("/api/learning/explore?interested=true").json()["data"]
+        assert [s["id"] for s in data] == [subject.id]
+
+    def test_rejects_bad_interested(self, auth_client):
+        resp = auth_client.get("/api/learning/explore?interested=yes")
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
 
 @pytest.mark.django_db
 class TestEnrolledSubjectsCurrentTopic:

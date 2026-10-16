@@ -291,6 +291,23 @@ class TestExploreSubjects:
         results = explore_subjects(user)
         assert results[0]["is_interested"] is True
 
+    def test_interested_only_filters_before_limit(self, user):
+        for i in range(3):
+            s = Subject.objects.create(name=f"S{i}")
+            Topic.objects.create(subject=s, title="T", level=1, order=1)
+        starred = Subject.objects.create(name="Zzz")
+        Topic.objects.create(subject=starred, title="T", level=1, order=1)
+        UserInterest.objects.create(user=user, subject=starred)
+        results = explore_subjects(user, limit=1, interested_only=True)
+        assert [r["name"] for r in results] == ["Zzz"]
+
+    def test_interested_only_excludes_enrolled(self, user):
+        s = Subject.objects.create(name="S1")
+        Topic.objects.create(subject=s, title="T", level=1, order=1)
+        UserInterest.objects.create(user=user, subject=s)
+        UserSubjectProgress.objects.create(user=user, subject=s)
+        assert explore_subjects(user, interested_only=True) == []
+
     def test_orders_by_popularity(self, user):
         s1 = Subject.objects.create(name="Popular")
         s2 = Subject.objects.create(name="LessPopular")
