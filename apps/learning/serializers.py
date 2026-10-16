@@ -196,6 +196,7 @@ class SubjectDetailSerializer(serializers.Serializer):
     notification_frequency_hours = serializers.IntegerField(help_text="Notification interval in hours.")
     next_due_at = serializers.DateTimeField(allow_null=True, help_text="Next scheduled notification, or null.")
     roadmap_status = serializers.CharField(help_text="Roadmap generation status: NOT_GENERATED, GENERATING, READY or FAILED.")
+    percent_complete = serializers.IntegerField(help_text="Percentage of topics passed (0-100); same value as the subject list.")
     levels = SubjectDetailLevelSerializer(many=True, help_text="Per-level progress rollups.")
     topics = SubjectTopicProgressSerializer(many=True, help_text="Full topic roadmap with per-user progress.")
 

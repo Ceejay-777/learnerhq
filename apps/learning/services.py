@@ -64,6 +64,7 @@ class SubjectDetailResult:
     notification_frequency_hours: int
     next_due_at: datetime | None
     roadmap_status: str
+    percent_complete: int
     levels: list[dict]
     topics: list[dict]
 
@@ -656,6 +657,10 @@ def get_subject_detail(user, subject_id: int) -> SubjectDetailResult:
         notification_frequency_hours=usp.notification_frequency_hours,
         next_due_at=usp.next_due_at,
         roadmap_status=usp.subject.roadmap_status,
+        percent_complete=(
+            sum(t["is_passed"] for t in topics_data) * 100 // len(topics_data)
+            if topics_data else 0
+        ),
         levels=levels,
         topics=topics_data,
     )
@@ -1143,6 +1148,30 @@ def global_leaderboard(limit=50):
                     "user_id": user.id,
                     "display_name": user.display_name or user.email,
                     "total_points": user.total_points,
+                }
+            )
+            if len(result) >= limit:
+                break
+
+    return result
+
+
+def subject_leaderboard(subject_id, limit=20):
+    progress_qs = (
+        UserSubjectProgress.objects.filter(subject_id=subject_id, points__gt=0)
+        .select_related("user__preferences")
+        .order_by("-points", "user_id")
+    )
+
+    result = []
+    for rank, usp in enumerate(progress_qs, 1):
+        if usp.user.preferences.leaderboard_visible:
+            result.append(
+                {
+                    "rank": rank,
+                    "user_id": usp.user_id,
+                    "display_name": usp.user.display_name or usp.user.email,
+                    "points": usp.points,
                 }
             )
             if len(result) >= limit:
