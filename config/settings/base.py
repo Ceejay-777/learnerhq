@@ -181,6 +181,8 @@ ANYMAIL = {
     "BREVO_API_KEY": os.environ.get("BREVO_API_KEY"),
 }
 EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
+# Must be a sender verified in Brevo; Django's default (webmaster@localhost) is rejected.
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL") or "webmaster@localhost"
 SERVICE_BASE_URL = os.environ.get("SERVICE_BASE_URL", "http://localhost:8000")
 
 # Server-sent events (django-eventstream). Channels are per-user and only the

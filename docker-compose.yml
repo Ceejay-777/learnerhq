@@ -19,6 +19,7 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       GROQ_API_KEY: ${GROQ_API_KEY}
       BREVO_API_KEY: ${BREVO_API_KEY}
+      DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
     ports: ["8000:8000"]
     depends_on:
       redis:
