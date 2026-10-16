@@ -36,15 +36,16 @@ PROVIDERS: dict[str, ProviderConfig] = {
         name="gemini",
         base_url="",
         api_key_env="GEMINI_API_KEY",
-        generate_models=["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite"],
+        # Text generation moved to Groq; Gemini is only used for embeddings.
+        generate_models=[],
         review_models=[],
     ),
     "groq": ProviderConfig(
         name="groq",
         base_url="https://api.groq.com/openai/v1",
         api_key_env="GROQ_API_KEY",
-        generate_models=[],
-        review_models=["openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+        generate_models=["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"],
+        review_models=["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
     ),
 }
 

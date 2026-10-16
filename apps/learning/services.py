@@ -296,6 +296,7 @@ def generate_topic_content(topic_id: int) -> None:
             ),
             system_instruction=TOPIC_CONTENT_SYSTEM_INSTRUCTION,
             output_schema=TOPIC_CONTENT_SCHEMA,
+            action="topic",
         )
         try:
             validated = _validate_topic_content(response)
@@ -416,6 +417,7 @@ def generate_roadmap(subject: Subject, max_retries: int = 1) -> list[Topic]:
             prompt=prompt,
             system_instruction=ROADMAP_SYSTEM_INSTRUCTION,
             output_schema=ROADMAP_SCHEMA,
+            action="roadmap",
         )
         try:
             validated = _validate_roadmap_response(response)
@@ -1351,6 +1353,11 @@ def generate_quiz(
             prompt=prompt,
             system_instruction=QUIZ_SYSTEM_INSTRUCTION,
             output_schema=schema,
+            action=(
+                "quiz_advanced"
+                if quiz_type == QuizAttempt.QuizType.ADVANCED
+                else "quiz_normal"
+            ),
         )
         try:
             validated = _validate_quiz_response(response, quiz_type)

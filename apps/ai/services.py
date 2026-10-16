@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -161,26 +162,69 @@ def _validate_shape(data: Any, schema: dict, path: str = "") -> None:
 
 
 # ---------------------------------------------------------------------------
-# Role-to-provider mapping
+# Per-action provider chains
 # ---------------------------------------------------------------------------
 
-# Each role maps to an ordered list of (provider_name, model_id) pairs.
-# The dispatcher tries each in order until one succeeds.
-_ROLE_PROVIDERS: dict[str, list[tuple[str, str]]] = {
-    "generate": [
-        ("gemini", "gemini-3.8-flash"),
-        ("gemini", "gemini-3.7-flash"),
-        ("gemini", "gemini-3.5-flash-lite"),
-    ],
+
+@dataclass(frozen=True)
+class ChainStep:
+    provider: str
+    model: str
+    # Groq ``reasoning_effort``. None omits the parameter (provider default).
+    effort: str | None = None
+
+
+_GPT_OSS_120B = "openai/gpt-oss-120b"
+_GPT_OSS_20B = "openai/gpt-oss-20b"
+_QWEN = "qwen/qwen3.8-27b"
+
+_LONG_FORM_CHAIN = [
+    ChainStep("groq", _GPT_OSS_120B, "medium"),
+    ChainStep("groq", _QWEN),
+    ChainStep("groq", _GPT_OSS_20B, "medium"),
+]
+
+# Each action maps to an ordered chain. The dispatcher tries each step in
+# order until one succeeds. Chosen from docs/groq-model-test-report.md.
+_ACTION_CHAINS: dict[str, list[ChainStep]] = {
+    "roadmap": _LONG_FORM_CHAIN,
+    "topic": _LONG_FORM_CHAIN,
     "review": [
-        ("groq", "openai/gpt-oss-120b"),
-        ("groq", "openai/gpt-oss-20b"),
+        ChainStep("groq", _QWEN, "default"),  # thinking on
+        ChainStep("groq", _GPT_OSS_120B, "medium"),
+        ChainStep("groq", _GPT_OSS_20B, "medium"),
+    ],
+    "quiz_normal": [
+        ChainStep("groq", _GPT_OSS_120B, "low"),
+        ChainStep("groq", _GPT_OSS_20B, "low"),
+        ChainStep("groq", _QWEN),
+    ],
+    "quiz_advanced": [
+        ChainStep("groq", _GPT_OSS_120B, "medium"),
+        ChainStep("groq", _GPT_OSS_20B, "medium"),
+        ChainStep("groq", _QWEN),
+    ],
+    "standardize": [
+        ChainStep("groq", _GPT_OSS_20B, "low"),
+        ChainStep("groq", _GPT_OSS_120B, "low"),
     ],
     "resolve": [
-        ("gemini", "gemini-3.5-flash-lite"),
-        ("gemini", "gemini-3.1-flash-lite"),
-        ("groq", "openai/gpt-oss-120b"),
+        ChainStep("groq", _GPT_OSS_20B, "low"),
+        ChainStep("groq", _GPT_OSS_120B, "low"),
     ],
+}
+
+# Output-token ceiling per request. Reasoning tokens count toward it, so
+# without an explicit cap the provider's small default truncates the JSON
+# (seen at 2,048 tokens in testing) and the response fails validation.
+_MAX_COMPLETION_TOKENS: dict[str, int] = {
+    "roadmap": 8192,
+    "topic": 8192,
+    "quiz_normal": 8192,
+    "quiz_advanced": 8192,
+    "review": 4096,
+    "standardize": 4096,
+    "resolve": 4096,
 }
 
 
@@ -194,52 +238,95 @@ def _call_openai_compatible(
     model: str,
     messages: list[dict],
     response_format: dict | None = None,
+    reasoning_effort: str | None = None,
+    max_completion_tokens: int | None = None,
 ) -> dict:
     """Call an OpenAI-compatible provider and return parsed JSON."""
     client = get_client(config)
     payload: dict[str, Any] = {"model": model, "messages": messages}
     if response_format:
         payload["response_format"] = response_format
+    if reasoning_effort:
+        payload["reasoning_effort"] = reasoning_effort
+    if max_completion_tokens:
+        payload["max_completion_tokens"] = max_completion_tokens
     resp = client.post("/chat/completions", json=payload)
     resp.raise_for_status()
-    return json.loads(resp.json()["choices"][0]["message"]["content"])
+    choice = resp.json()["choices"][0]
+    if choice.get("finish_reason") == "length":
+        # Cut off at the token ceiling: the JSON is incomplete. Fail this step
+        # so the chain moves on instead of returning a partial document.
+        raise ProviderError(
+            f"{model} response truncated at max_completion_tokens",
+            provider=config.name,
+            recoverable=True,
+        )
+    return json.loads(choice["message"]["content"])
 
 
-def _call_provider(provider_name: str, model: str, messages: list[dict], schema: dict) -> dict:
+def _call_provider(
+    provider_name: str,
+    model: str,
+    messages: list[dict],
+    schema: dict,
+    *,
+    effort: str | None = None,
+    max_tokens: int | None = None,
+) -> dict:
     """Route to the correct calling mechanism per provider."""
     if provider_name == "gemini":
         return call_gemini_native(messages, schema, model=model)
     elif provider_name == "groq":
         config = PROVIDERS["groq"]
         response_format = build_groq_response_format(schema, "Response")
-        return _call_openai_compatible(config, model, messages, response_format)
+        return _call_openai_compatible(
+            config,
+            model,
+            messages,
+            response_format,
+            reasoning_effort=effort,
+            max_completion_tokens=max_tokens,
+        )
     else:
         raise ValueError(f"Unknown provider: {provider_name}")
 
 
-def _call_with_fallback(role: str, messages: list[dict], schema: dict, schema_name: str) -> dict:
-    """Try providers in order for the given role. Raises ProviderError when all fail."""
-    chain = _ROLE_PROVIDERS.get(role, [])
-    last_error = None
+def _call_with_fallback(action: str, messages: list[dict], schema: dict, schema_name: str) -> dict:
+    """Try the action's chain in order. Raises ProviderError when every step fails."""
+    if action not in _ACTION_CHAINS:
+        raise ValueError(f"Unknown AI action: {action}")
+    chain = _ACTION_CHAINS[action]
+    max_tokens = _MAX_COMPLETION_TOKENS.get(action)
 
-    for provider_name, model_id in chain:
+    for step in chain:
+        started = time.monotonic()
         try:
-            result = _call_provider(provider_name, model_id, messages, schema)
-            logger.info("%s served by %s/%s", role, provider_name, model_id)
+            result = _call_provider(
+                step.provider,
+                step.model,
+                messages,
+                schema,
+                effort=step.effort,
+                max_tokens=max_tokens,
+            )
+            logger.info(
+                "%s served by %s/%s in %.1fs",
+                action, step.provider, step.model, time.monotonic() - started,
+            )
             return result
         except Exception as e:
             logger.warning(
-                "%s %s/%s failed: %s", role, provider_name, model_id, e
+                "%s %s/%s failed after %.1fs: %s",
+                action, step.provider, step.model, time.monotonic() - started, e,
             )
             sentry_sdk.capture_message(
-                f"{role} {provider_name}/{model_id} failed: {e}",
+                f"{action} {step.provider}/{step.model} failed: {e}",
                 level="warning",
             )
-            last_error = e
 
     raise ProviderError(
-        f"All providers failed for {role}",
-        provider=chain[0][0] if chain else "none",
+        f"All providers failed for {action}",
+        provider=chain[0].provider,
         recoverable=False,
     )
 
@@ -253,11 +340,14 @@ def generate_content(
     prompt: str,
     system_instruction: str | None = None,
     output_schema: dict[str, Any] | None = None,
+    *,
+    action: str = "topic",
 ) -> dict[str, Any]:
-    """Generate educational content. Returns validated dict."""
+    """Generate educational content for ``action`` (roadmap, topic, quiz_normal,
+    quiz_advanced). Returns validated dict."""
     schema = output_schema or TOPIC_CONTENT_SCHEMA
     messages = build_generation_messages(prompt, system_instruction, schema)
-    result = _call_with_fallback("generate", messages, schema, "GeneratedContent")
+    result = _call_with_fallback(action, messages, schema, "GeneratedContent")
     _validate_shape(result, schema)
     return result
 
@@ -305,7 +395,7 @@ def standardize_subject_name(raw_input: str) -> dict[str, Any]:
     """Standardize a raw subject name. Returns validated dict."""
     messages = build_standardize_messages(raw_input)
     result = _call_with_fallback(
-        "resolve", messages, STANDARDIZE_NAME_SCHEMA, "StandardizeName"
+        "standardize", messages, STANDARDIZE_NAME_SCHEMA, "StandardizeName"
     )
     _validate_shape(result, STANDARDIZE_NAME_SCHEMA)
     return result

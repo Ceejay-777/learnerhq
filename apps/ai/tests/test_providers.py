@@ -18,16 +18,20 @@ class TestProviderConfig:
         assert "gemini" in PROVIDERS
         assert "opencode_zen" not in PROVIDERS
 
-    def test_gemini_config_has_generate_models(self):
-        gemini = PROVIDERS["gemini"]
-        assert "gemini-3.8-flash" in gemini.generate_models
-        assert "gemini-3.7-flash" in gemini.generate_models
-        assert "gemini-3.5-flash-lite" in gemini.generate_models
+    def test_gemini_is_not_used_for_text_generation(self):
+        # Text generation moved to Groq; Gemini remains for embeddings only.
+        assert PROVIDERS["gemini"].generate_models == []
+
+    def test_groq_config_has_generate_models(self):
+        groq = PROVIDERS["groq"]
+        for model in ("openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"):
+            assert model in groq.generate_models
 
     def test_groq_config_has_review_models(self):
         groq = PROVIDERS["groq"]
         assert "openai/gpt-oss-120b" in groq.review_models
         assert "openai/gpt-oss-20b" in groq.review_models
+        assert "qwen/qwen3.8-27b" in groq.review_models
 
 
 class TestResponseFormatBuilders:
@@ -52,7 +56,7 @@ class TestVerifyProviderModels:
         """Gemini uses native SDK — models validated at call time."""
         config = PROVIDERS["gemini"]
         result = verify_provider_models(config)
-        assert "gemini-3.8-flash" in result
+        assert result == config.generate_models + config.review_models
 
     def test_verify_caches_result(self):
         import httpx as _httpx
