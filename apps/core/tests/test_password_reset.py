@@ -8,8 +8,52 @@ from datetime import timedelta
 from apps.core.models import PasswordResetToken
 
 
+@pytest.fixture(autouse=True)
+def _clear_throttle_cache():
+    from django.core.cache import cache
+    cache.clear()
+
+
 @pytest.mark.django_db
 class TestPasswordResetRequest:
+
+    def _post(self, email='a@example.com'):
+        return APIClient().post('/api/auth/password-reset/request', {'email': email}, format='json')
+
+    def test_second_request_within_a_minute_is_throttled(self):
+        assert self._post().status_code == 200
+        response = self._post('A@example.com')
+        assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+        assert 0 < response.data['retry_after'] <= 60
+        assert response['Retry-After'] == str(response.data['retry_after'])
+
+    def test_wait_doubles_and_caps(self):
+        now = 1_000_000.0
+        waits = []
+        with mock.patch('config.utils.throttling.time.time') as clock:
+            for _ in range(9):
+                clock.return_value = now
+                assert self._post().status_code == 200
+                clock.return_value = now + 1
+                waits.append(self._post().data['retry_after'] + 1)
+                now += waits[-1]
+        assert waits == [60, 120, 240, 480, 960, 1920, 3600, 3600, 3600]
+
+    def test_other_email_is_not_throttled(self):
+        self._post()
+        assert self._post('b@example.com').status_code == 200
+
+    def test_concurrent_request_holding_the_lock_is_throttled(self):
+        from django.core.cache import cache
+        cache.add('throttle:password_reset:a@example.com:lock', 1, timeout=5)
+        response = self._post()
+        assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+        assert response.data['retry_after'] == 1
+
+    def test_ip_limit_is_30_per_hour(self):
+        for i in range(30):
+            assert self._post(f'u{i}@example.com').status_code == 200
+        assert self._post('u30@example.com').status_code == status.HTTP_429_TOO_MANY_REQUESTS
 
     def test_request_creates_token(self):
         User = get_user_model()
@@ -56,6 +100,18 @@ class TestPasswordResetConfirm:
         assert response.status_code == status.HTTP_200_OK
         user.refresh_from_db()
         assert user.check_password('NewStrongPass456') is True
+
+    def test_successful_reset_clears_request_backoff(self):
+        User = get_user_model()
+        user = User.objects.create_user(email='user@example.com', password='StrongPass123')
+        client = APIClient()
+        client.post('/api/auth/password-reset/request', {'email': 'user@example.com'}, format='json')
+        assert client.post('/api/auth/password-reset/request', {'email': 'user@example.com'}, format='json').status_code == 429
+        token = PasswordResetToken.objects.filter(user=user).first()
+        client.post('/api/auth/password-reset/confirm', {
+            'email': 'user@example.com', 'token': token.token, 'password': 'NewStrongPass456',
+        }, format='json')
+        assert client.post('/api/auth/password-reset/request', {'email': 'user@example.com'}, format='json').status_code == 200
 
     def test_confirm_deletes_token_after_use(self):
         User = get_user_model()

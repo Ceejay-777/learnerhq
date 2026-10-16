@@ -1,4 +1,5 @@
 import pytest
+from unittest import mock
 from unittest.mock import patch
 from django.core import mail
 
@@ -28,3 +29,15 @@ class TestEmailService:
             send_html_email("HTML Subject", "emails/test.html", "test@example.com", {"key": "value"})
         assert len(mail.outbox) == 1
         assert mail.outbox[0].subject == "HTML Subject"
+
+
+@mock.patch("config.utils.tasks.sentry_sdk.capture_message")
+@mock.patch("config.utils.email_notifications.send_text_email")
+def test_reset_email_task_reports_only_on_last_attempt(mock_send, mock_sentry):
+    from config.utils.email_service import EmailSendError
+    from config.utils.tasks import send_password_reset_email
+
+    mock_send.side_effect = EmailSendError("boom")
+    with pytest.raises(EmailSendError):
+        send_password_reset_email.apply(args=["u@example.com", "tok"], retries=3, throw=True)
+    mock_sentry.assert_called_once()

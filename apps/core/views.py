@@ -15,6 +15,7 @@ from .serializers import (
     UserProfileSerializer,
     PreferencesUpdateSerializer,
 )
+from .throttles import PasswordResetEmailThrottle, PasswordResetIPThrottle
 from .services import create_user, create_password_reset_token, set_password_with_token
 
 User = get_user_model()
@@ -180,6 +181,7 @@ class SignOutView(GenericAPIView):
 class PasswordResetRequestView(GenericAPIView):
     serializer_class = PasswordResetRequestSerializer
     authentication_classes = []
+    throttle_classes = [PasswordResetIPThrottle, PasswordResetEmailThrottle]
 
     @extend_schema(
         tags=['Auth'],
@@ -225,6 +227,7 @@ class PasswordResetConfirmView(GenericAPIView):
             token_str=token.token,
             new_password=serializer.validated_data['password'],
         )
+        PasswordResetEmailThrottle.clear(token.user.email.strip().lower())
         return Response({"detail": "Password reset successful.", "status": "success"})
 
 

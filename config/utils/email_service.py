@@ -6,6 +6,10 @@ from django.template.loader import render_to_string
 logger = logging.getLogger(__name__)
 
 
+class EmailSendError(Exception):
+    """Delivery failed; lets Celery tasks retry on this type alone."""
+
+
 def send_text_email(subject: str, body: str, recipient: str):
     try:
         send_mail(
@@ -16,7 +20,7 @@ def send_text_email(subject: str, body: str, recipient: str):
         )
     except Exception as e:
         logger.error("Email send failed to %s: %s", recipient, e)
-        raise Exception(f"Failed to send email to {recipient}") from e
+        raise EmailSendError(f"Failed to send email to {recipient}") from e
 
 
 def send_html_email(subject: str, template_path: str, recipient: str, context: dict):
@@ -41,4 +45,4 @@ def send_html_email(subject: str, template_path: str, recipient: str, context: d
         msg.send()
     except Exception as e:
         logger.error("HTML email send failed to %s: %s", recipient, e)
-        raise Exception(f"Failed to send email to {recipient}") from e
+        raise EmailSendError(f"Failed to send email to {recipient}") from e

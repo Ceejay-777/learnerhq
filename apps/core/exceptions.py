@@ -1,8 +1,10 @@
 import logging
+import math
 
 from django.core.exceptions import ObjectDoesNotExist
 from django.http import Http404
 from rest_framework import status
+from rest_framework.exceptions import Throttled
 from rest_framework.response import Response
 from rest_framework.views import exception_handler
 
@@ -28,6 +30,11 @@ def custom_exception_handler(exc, context):
         else:
             detail = str(detail)
         response.data = {"detail": detail, "status": "error"}
+        if isinstance(exc, Throttled) and exc.wait is not None:
+            # Body copy of Retry-After so the FE needn't read the header.
+            retry_after = math.ceil(exc.wait)
+            response.data["retry_after"] = retry_after
+            response["Retry-After"] = str(retry_after)
         return response
 
     logger.exception("Unhandled exception in API view")

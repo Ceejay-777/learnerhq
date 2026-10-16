@@ -8,6 +8,15 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 
 from .base import *
 
+# Shared across web processes; the default LocMemCache is per-process, which
+# would make throttle limits per-worker.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": CELERY_BROKER_URL,
+    }
+}
+
 SENTRY_DSN = os.environ.get("SENTRY_DSN")
 if SENTRY_DSN:
     sentry_logging = LoggingIntegration(sentry_logs_level=logging.INFO)
