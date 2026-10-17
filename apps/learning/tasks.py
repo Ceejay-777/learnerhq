@@ -18,6 +18,7 @@ from apps.ai.exceptions import ProviderError
     max_retries=3,
 )
 def generate_content_for_topic(self, topic_id: int) -> None:
+    from .events import publish_topic_status
     from .models import Topic
     from .exceptions import GenerationError
     from .services import ensure_topic_content_ready, generate_topic_content
@@ -36,6 +37,7 @@ def generate_content_for_topic(self, topic_id: int) -> None:
             content_status=Topic.ContentStatus.FAILED,
             review_status=Topic.ReviewStatus.FLAGGED,
         )
+        publish_topic_status(topic_id)
         return
 
     review_content_for_topic.delay(topic_id)
@@ -51,6 +53,7 @@ def generate_content_for_topic(self, topic_id: int) -> None:
     max_retries=3,
 )
 def review_content_for_topic(self, topic_id: int) -> None:
+    from .events import publish_topic_status
     from .models import Topic
     from .services import review_topic_content
 
@@ -62,6 +65,7 @@ def review_content_for_topic(self, topic_id: int) -> None:
             content_status=Topic.ContentStatus.READY,
             review_status=Topic.ReviewStatus.PASSED,
         )
+        publish_topic_status(topic_id)
         return
 
     Topic.objects.filter(id=topic_id).update(
@@ -84,6 +88,7 @@ def review_content_for_topic(self, topic_id: int) -> None:
             content_status=Topic.ContentStatus.FAILED,
             review_status=Topic.ReviewStatus.FLAGGED,
         )
+        publish_topic_status(topic_id)
 
 
 @shared_task(
