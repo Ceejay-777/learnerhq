@@ -39,6 +39,7 @@ from .services import (
     get_own_quiz_attempt,
     get_subject_detail,
     get_subject_preview,
+    get_topic_progress,
     global_leaderboard,
     mark_resource_links_viewed,
     mark_subject_interest,
@@ -438,6 +439,7 @@ class TopicDetailView(GenericAPIView):
                 "review_status": topic.review_status,
                 "subject_id": topic.subject_id,
                 "subject_name": topic.subject.name,
+                "progress": get_topic_progress(request.user, topic),
             },
             "status": "success",
         })

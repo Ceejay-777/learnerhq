@@ -128,6 +128,21 @@ class RoadmapStatusResponseSerializer(serializers.Serializer):
     roadmap_status = serializers.CharField(help_text="Roadmap generation status: NOT_GENERATED, GENERATING, READY or FAILED.")
 
 
+class CurrentTopicSerializer(serializers.Serializer):
+    id = serializers.IntegerField(help_text="Topic ID.")
+    title = serializers.CharField(help_text="Topic title.")
+
+
+class TopicProgressSerializer(serializers.Serializer):
+    status = serializers.CharField(help_text="NOT_STARTED, PASSED or ADVANCED_PASSED (READING and QUIZ_READY are never set).")
+    is_passed = serializers.BooleanField(help_text="Normal quiz passed (also true after the advanced pass).")
+    advanced_passed = serializers.BooleanField(help_text="Advanced quiz passed.")
+    completed_at = serializers.DateTimeField(allow_null=True, help_text="When the normal quiz was passed, or null.")
+    resource_links_viewed_at = serializers.DateTimeField(allow_null=True, help_text="When the learner opened a resource link, or null.")
+    advanced_quiz_available = serializers.BooleanField(help_text="Whether the advanced quiz can be started now (ignores the retake cooldown).")
+    next_topic = CurrentTopicSerializer(allow_null=True, help_text="The next topic in the roadmap, or null at the end.")
+
+
 class TopicDetailSerializer(serializers.Serializer):
     id = serializers.IntegerField(help_text="Topic ID.")
     title = serializers.CharField(help_text="Topic title.")
@@ -139,11 +154,7 @@ class TopicDetailSerializer(serializers.Serializer):
     review_status = serializers.CharField(help_text="Content review status.")
     subject_id = serializers.IntegerField(help_text="Parent subject ID.")
     subject_name = serializers.CharField(help_text="Parent subject name.")
-
-
-class CurrentTopicSerializer(serializers.Serializer):
-    id = serializers.IntegerField(help_text="Topic ID.")
-    title = serializers.CharField(help_text="Topic title.")
+    progress = TopicProgressSerializer(help_text="The current user's progress on this topic.")
 
 
 class EnrolledSubjectListSerializer(serializers.Serializer):
@@ -175,7 +186,9 @@ class SubjectTopicProgressSerializer(serializers.Serializer):
     review_status = serializers.CharField(help_text="Content review status.")
     user_progress_status = serializers.CharField(allow_null=True, help_text="User's progress on this topic, or null if not started.")
     is_passed = serializers.BooleanField(help_text="Whether the user has passed this topic.")
+    advanced_passed = serializers.BooleanField(help_text="Whether the user has passed the advanced quiz.")
     completed_at = serializers.DateTimeField(allow_null=True, help_text="When the user completed this topic, or null.")
+    resource_links_viewed_at = serializers.DateTimeField(allow_null=True, help_text="When the user opened a resource link, or null.")
 
 
 class SubjectDetailLevelSerializer(serializers.Serializer):

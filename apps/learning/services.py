@@ -615,11 +615,15 @@ def get_subject_detail(user, subject_id: int) -> SubjectDetailResult:
     completed_subq = TopicProgress.objects.filter(
         user=user, topic=OuterRef("pk")
     ).values("completed_at")[:1]
+    viewed_subq = TopicProgress.objects.filter(
+        user=user, topic=OuterRef("pk")
+    ).values("resource_links_viewed_at")[:1]
     topics = (
         Topic.objects.filter(subject=usp.subject)
         .annotate(
             user_progress_status=Subquery(topic_statuses),
             user_completed_at=Subquery(completed_subq),
+            user_links_viewed_at=Subquery(viewed_subq),
         )
         .order_by("level", "order")
     )
@@ -665,7 +669,10 @@ def get_subject_detail(user, subject_id: int) -> SubjectDetailResult:
                 "review_status": t.review_status,
                 "user_progress_status": t.user_progress_status,
                 "is_passed": t.user_progress_status in passed_statuses,
+                "advanced_passed": t.user_progress_status
+                == TopicProgress.Status.ADVANCED_PASSED,
                 "completed_at": t.user_completed_at,
+                "resource_links_viewed_at": t.user_links_viewed_at,
             }
         )
 
@@ -1331,6 +1338,27 @@ def prefetch_topic_content(topic: Topic) -> None:
     request_topic_generation(topic.id)
     ensure_buffer_ahead(topic)
     topic.refresh_from_db(fields=["content_status"])
+
+
+def get_topic_progress(user, topic: Topic) -> dict:
+    tp = TopicProgress.objects.filter(user=user, topic=topic).first()
+    status = tp.status if tp else TopicProgress.Status.NOT_STARTED
+    next_topic = (
+        Topic.objects.filter(subject_id=topic.subject_id, order__gt=topic.order)
+        .order_by("order")
+        .values("id", "title")
+        .first()
+    )
+    return {
+        "status": status,
+        "is_passed": status
+        in (TopicProgress.Status.PASSED, TopicProgress.Status.ADVANCED_PASSED),
+        "advanced_passed": status == TopicProgress.Status.ADVANCED_PASSED,
+        "completed_at": tp.completed_at if tp else None,
+        "resource_links_viewed_at": tp.resource_links_viewed_at if tp else None,
+        "advanced_quiz_available": can_take_advanced_quiz(user, topic),
+        "next_topic": next_topic,
+    }
 
 
 def get_own_quiz_attempt(user, topic, attempt_id) -> QuizAttempt:

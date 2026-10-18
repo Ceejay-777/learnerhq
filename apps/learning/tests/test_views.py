@@ -335,6 +335,38 @@ class TestTopicAccess:
         resp = auth_client.get(f"/api/learning/topics/{self._topic(subject).id}")
         assert resp.status_code == status.HTTP_200_OK
 
+    def test_progress_for_new_learner(self, auth_client, subject, enrolled):
+        topics = list(Topic.objects.filter(subject=subject).order_by("order"))
+        p = auth_client.get(f"/api/learning/topics/{topics[0].id}").json()["data"]["progress"]
+        assert p == {
+            "status": "NOT_STARTED", "is_passed": False, "advanced_passed": False,
+            "completed_at": None, "resource_links_viewed_at": None,
+            "advanced_quiz_available": False,
+            "next_topic": {"id": topics[1].id, "title": topics[1].title},
+        }
+
+    def test_progress_after_advanced_pass(self, auth_client, user, subject, enrolled):
+        topics = list(Topic.objects.filter(subject=subject).order_by("order"))
+        TopicProgress.objects.create(
+            user=user, topic=topics[-1], status=TopicProgress.Status.ADVANCED_PASSED,
+            completed_at="2026-01-01T00:00:00Z", resource_links_viewed_at="2026-01-02T00:00:00Z",
+        )
+        p = auth_client.get(f"/api/learning/topics/{topics[-1].id}").json()["data"]["progress"]
+        assert p["status"] == "ADVANCED_PASSED"
+        assert p["is_passed"] and p["advanced_passed"]
+        assert p["completed_at"] and p["resource_links_viewed_at"]
+        assert p["advanced_quiz_available"] is False  # already passed it
+        assert p["next_topic"] is None  # last topic
+
+    def test_advanced_quiz_available_after_pass_and_links(self, auth_client, user, subject, enrolled):
+        topic = self._topic(subject)
+        TopicProgress.objects.create(
+            user=user, topic=topic, status=TopicProgress.Status.PASSED,
+            resource_links_viewed_at="2026-01-02T00:00:00Z",
+        )
+        p = auth_client.get(f"/api/learning/topics/{topic.id}").json()["data"]["progress"]
+        assert p["advanced_quiz_available"] is True
+
     def test_opening_topic_queues_it_and_next_two_once(self, auth_client, subject, enrolled):
         topic = self._topic(subject)
         for _ in range(10):
@@ -481,6 +513,22 @@ class TestSubjectDetailView:
         assert last["is_passed"] is False
         assert last["user_progress_status"] is None
         assert last["completed_at"] is None
+        assert first["advanced_passed"] is False
+        assert first["resource_links_viewed_at"] is None
+        assert last["advanced_passed"] is False
+
+    def test_advanced_passed_and_links_viewed_per_topic(self, auth_client, user, subject):
+        UserSubjectProgress.objects.create(user=user, subject=subject)
+        tp = Topic.objects.filter(subject=subject, order=1).first()
+        TopicProgress.objects.create(
+            user=user, topic=tp, status=TopicProgress.Status.ADVANCED_PASSED,
+            resource_links_viewed_at="2026-01-02T00:00:00Z",
+        )
+        data = auth_client.get(f"/api/learning/subjects/{subject.id}").json()["data"]
+        first = data["topics"][0]
+        assert first["advanced_passed"] is True
+        assert first["is_passed"] is True
+        assert first["resource_links_viewed_at"] is not None
 
     def test_levels_unlocked_correctly(self, auth_client, user, subject):
         UserSubjectProgress.objects.create(user=user, subject=subject, level_unlocked=2)
