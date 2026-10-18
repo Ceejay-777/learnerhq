@@ -19,6 +19,7 @@ from .serializers import (
     OthersLearningEntrySerializer,
     ResourceLinksViewedResponseSerializer,
     RoadmapStatusResponseSerializer,
+    TopicStatusResponseSerializer,
     SubjectDetailSerializer,
     SubjectPreviewSerializer,
     SubjectSuggestionSerializer,
@@ -47,6 +48,7 @@ from .services import (
     prefetch_topic_content,
     remove_subject_interest,
     retry_roadmap,
+    retry_topic,
     set_notification_frequency,
     submit_quiz,
     subject_leaderboard,
@@ -443,6 +445,20 @@ class TopicDetailView(GenericAPIView):
             },
             "status": "success",
         })
+
+
+class RetryTopicView(GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["Learning"],
+        summary="Retry content generation for a failed topic",
+        request=None,
+        responses={200: TopicStatusResponseSerializer, 403: None, 404: None},
+    )
+    def post(self, request, topic_id):
+        topic = retry_topic(request.user, topic_id)
+        return Response({"data": {"content_status": topic.content_status}, "status": "success"})
 
 
 class EnrolledSubjectsView(GenericAPIView):

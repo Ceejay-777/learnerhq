@@ -420,6 +420,52 @@ class TestTopicAccess:
 
 
 @pytest.mark.django_db
+class TestRetryTopicView:
+    @pytest.fixture(autouse=True)
+    def _no_generation(self):
+        with patch("apps.learning.tasks.generate_content_for_topic.delay") as m:
+            self.delay = m
+            yield
+
+    def _url(self, subject):
+        return f"/api/learning/topics/{Topic.objects.filter(subject=subject).first().id}/retry"
+
+    def test_requires_auth(self, client, subject):
+        assert client.post(self._url(subject)).status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_not_enrolled_is_404(self, auth_client, subject):
+        assert auth_client.post(self._url(subject)).status_code == status.HTTP_404_NOT_FOUND
+        self.delay.assert_not_called()
+
+    def test_failed_topic_is_restarted(self, auth_client, subject, enrolled):
+        topic = Topic.objects.filter(subject=subject).first()
+        Topic.objects.filter(id=topic.id).update(
+            content_status="FAILED", review_status="FLAGGED", review_attempts=2,
+        )
+        resp = auth_client.post(self._url(subject))
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.json()["data"] == {"content_status": "GENERATING"}
+        topic.refresh_from_db()
+        assert (topic.review_attempts, topic.review_status) == (0, "PENDING")
+        self.delay.assert_called_once_with(topic.id)
+
+    def test_running_or_ready_topic_is_a_noop(self, auth_client, subject, enrolled):
+        topic = Topic.objects.filter(subject=subject).first()
+        for current in ("GENERATING", "READY"):
+            Topic.objects.filter(id=topic.id).update(content_status=current)
+            resp = auth_client.post(self._url(subject))
+            assert resp.json()["data"] == {"content_status": current}
+        self.delay.assert_not_called()
+
+    def test_repeated_retries_queue_once(self, auth_client, subject, enrolled):
+        topic = Topic.objects.filter(subject=subject).first()
+        Topic.objects.filter(id=topic.id).update(content_status="FAILED")
+        for _ in range(5):
+            auth_client.post(self._url(subject))
+        assert self.delay.call_count == 1
+
+
+@pytest.mark.django_db
 class TestEnrolledSubjectsView:
 
     def test_requires_auth(self, client):

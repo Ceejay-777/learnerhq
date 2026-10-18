@@ -14,6 +14,7 @@ from .views import (
     OthersLearningView,
     RemoveSubjectView,
     RetryRoadmapView,
+    RetryTopicView,
     SetNotificationFrequencyView,
     SubjectDetailView,
     SubjectLeaderboardView,
@@ -45,5 +46,6 @@ urlpatterns = [
     path("topics/<int:topic_id>/quiz/generate", GenerateQuizView.as_view(), name="quiz-generate"),
     path("topics/<int:topic_id>/quiz/submit", SubmitQuizView.as_view(), name="quiz-submit"),
     path("topics/<int:topic_id>/resource-links-viewed", MarkResourceLinksViewedView.as_view(), name="resource-links-viewed"),
+    path("topics/<int:topic_id>/retry", RetryTopicView.as_view(), name="retry-topic"),
     path("topics/<int:topic_id>", TopicDetailView.as_view(), name="topic-detail"),
 ]

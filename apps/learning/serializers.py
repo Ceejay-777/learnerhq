@@ -128,6 +128,10 @@ class RoadmapStatusResponseSerializer(serializers.Serializer):
     roadmap_status = serializers.CharField(help_text="Roadmap generation status: NOT_GENERATED, GENERATING, READY or FAILED.")
 
 
+class TopicStatusResponseSerializer(serializers.Serializer):
+    content_status = serializers.CharField(help_text="Content generation status: NOT_GENERATED, GENERATING, READY or FAILED.")
+
+
 class CurrentTopicSerializer(serializers.Serializer):
     id = serializers.IntegerField(help_text="Topic ID.")
     title = serializers.CharField(help_text="Topic title.")

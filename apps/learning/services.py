@@ -1340,6 +1340,20 @@ def prefetch_topic_content(topic: Topic) -> None:
     topic.refresh_from_db(fields=["content_status"])
 
 
+def retry_topic(user, topic_id: int) -> Topic:
+    """Restart generation for a FAILED topic. A no-op while it is running or ready."""
+    topic = get_accessible_topic(user, topic_id)
+    Topic.objects.filter(id=topic.id, content_status=Topic.ContentStatus.FAILED).update(
+        content_status=Topic.ContentStatus.NOT_GENERATED,
+        review_status=Topic.ReviewStatus.PENDING,
+        review_attempts=0,
+        generation_started_at=None,
+    )
+    request_topic_generation(topic.id)
+    topic.refresh_from_db(fields=["content_status"])
+    return topic
+
+
 def get_topic_progress(user, topic: Topic) -> dict:
     tp = TopicProgress.objects.filter(user=user, topic=topic).first()
     status = tp.status if tp else TopicProgress.Status.NOT_STARTED

@@ -8,6 +8,17 @@ from django.utils import timezone
 from apps.ai.exceptions import ProviderError
 
 
+def _mark_topic_failed(topic_id: int) -> None:
+    from .events import publish_topic_status
+    from .models import Topic
+
+    Topic.objects.filter(id=topic_id).update(
+        content_status=Topic.ContentStatus.FAILED,
+        review_status=Topic.ReviewStatus.FLAGGED,
+    )
+    publish_topic_status(topic_id)
+
+
 @shared_task(
     bind=True,
     name="learning.generate_content_for_topic",
@@ -18,8 +29,6 @@ from apps.ai.exceptions import ProviderError
     max_retries=3,
 )
 def generate_content_for_topic(self, topic_id: int) -> None:
-    from .events import publish_topic_status
-    from .models import Topic
     from .exceptions import GenerationError
     from .services import generate_topic_content
 
@@ -31,12 +40,14 @@ def generate_content_for_topic(self, topic_id: int) -> None:
             f"Topic {topic_id}: content validation failed after retries",
             level="error",
         )
-        Topic.objects.filter(id=topic_id).update(
-            content_status=Topic.ContentStatus.FAILED,
-            review_status=Topic.ReviewStatus.FLAGGED,
-        )
-        publish_topic_status(topic_id)
+        _mark_topic_failed(topic_id)
         return
+    except ProviderError:
+        # Re-raised so autoretry_for can retry; only on the last attempt do we
+        # also surface FAILED, because no further retry will update the state.
+        if self.request.retries >= self.max_retries:
+            _mark_topic_failed(topic_id)
+        raise
 
     review_content_for_topic.delay(topic_id)
 
@@ -82,11 +93,7 @@ def review_content_for_topic(self, topic_id: int) -> None:
             f"Topic {topic_id}: all review attempts exhausted",
             level="error",
         )
-        Topic.objects.filter(id=topic_id).update(
-            content_status=Topic.ContentStatus.FAILED,
-            review_status=Topic.ReviewStatus.FLAGGED,
-        )
-        publish_topic_status(topic_id)
+        _mark_topic_failed(topic_id)
 
 
 @shared_task(
@@ -216,7 +223,7 @@ def send_notification(self, user_subject_progress_id):
 
 @shared_task(name="learning.cleanup_stuck_generations")
 def cleanup_stuck_generations() -> None:
-    from .events import publish_roadmap_status
+    from .events import publish_roadmap_status, publish_topic_status
     from .models import Subject, Topic
 
     cutoff = timezone.now() - timedelta(hours=1)
@@ -235,24 +242,34 @@ def cleanup_stuck_generations() -> None:
         )
         publish_roadmap_status(subject)
 
-    Topic.objects.filter(
-        content_status=Topic.ContentStatus.GENERATING,
-        generation_started_at__lt=cutoff,
-    ).update(
+    stuck_ids = list(
+        Topic.objects.filter(
+            content_status=Topic.ContentStatus.GENERATING,
+            generation_started_at__lt=cutoff,
+        ).values_list("id", flat=True)
+    )
+    Topic.objects.filter(id__in=stuck_ids).update(
         content_status=Topic.ContentStatus.NOT_GENERATED,
         generation_started_at=None,
     )
 
-    Topic.objects.filter(
-        content_status=Topic.ContentStatus.FAILED,
-        review_status=Topic.ReviewStatus.FLAGGED,
-        review_attempts=0,
-        generation_started_at__lt=cutoff,
-    ).update(
+    failed_ids = list(
+        Topic.objects.filter(
+            content_status=Topic.ContentStatus.FAILED,
+            review_status=Topic.ReviewStatus.FLAGGED,
+            review_attempts=0,
+            generation_started_at__lt=cutoff,
+        ).values_list("id", flat=True)
+    )
+    Topic.objects.filter(id__in=failed_ids).update(
         content_status=Topic.ContentStatus.NOT_GENERATED,
         review_status=Topic.ReviewStatus.PENDING,
         generation_started_at=None,
     )
+
+    # Tell open pages the topic changed so they refetch (opening it restarts generation).
+    for topic_id in stuck_ids + failed_ids:
+        publish_topic_status(topic_id)
 
 
 @shared_task(name="learning.auto_select_subjects")
