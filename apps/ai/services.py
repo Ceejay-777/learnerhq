@@ -358,25 +358,32 @@ def review_content(
 ) -> dict[str, Any]:
     """Review content against quality rubric. Returns validated dict.
 
-    If all review providers fail, returns a flagged result so the caller
-    can handle manual review without raising.
+    If all review providers fail, or the reply is malformed twice, returns a
+    flagged result so the caller can handle manual review without raising.
     """
+    from apps.learning.exceptions import GenerationError
+
+    flagged = {
+        k: {"pass": False, "note": "Review unavailable — all providers failed"}
+        for k in ("accuracy", "audience_fit", "relevance", "completeness")
+    }
+    flagged["overall_passed"] = False
+
     messages = build_review_messages(content, criteria)
-    try:
-        result = _call_with_fallback(
-            "review", messages, REVIEW_SCHEMA, "ReviewResult"
-        )
-    except ProviderError:
-        logger.warning("All review providers failed, flagging for manual review")
-        return {
-            "accuracy": {"pass": False, "note": "Review unavailable — all providers failed"},
-            "audience_fit": {"pass": False, "note": "Review unavailable — all providers failed"},
-            "relevance": {"pass": False, "note": "Review unavailable — all providers failed"},
-            "completeness": {"pass": False, "note": "Review unavailable — all providers failed"},
-            "overall_passed": False,
-        }
-    _validate_shape(result, REVIEW_SCHEMA)
-    return result
+    for attempt in range(2):  # a malformed reply is usually a one-off
+        try:
+            result = _call_with_fallback(
+                "review", messages, REVIEW_SCHEMA, "ReviewResult"
+            )
+        except ProviderError:
+            logger.warning("All review providers failed, flagging for manual review")
+            return flagged
+        try:
+            _validate_shape(result, REVIEW_SCHEMA)
+            return result
+        except GenerationError:
+            logger.warning("Malformed review reply (attempt %d)", attempt + 1)
+    return flagged
 
 
 def rank_or_resolve(

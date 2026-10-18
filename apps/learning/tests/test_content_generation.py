@@ -565,6 +565,28 @@ class TestAIReviewContent:
         assert result["overall_passed"] is False
         assert "all providers failed" in result["accuracy"]["note"].lower()
 
+    @mock_patch("apps.ai.services._call_with_fallback")
+    def test_review_retries_a_malformed_reply_once(self, mock_fallback):
+        from apps.ai.services import review_content
+        good = {
+            "accuracy": {"pass": True, "note": "OK"},
+            "audience_fit": {"pass": True, "note": "OK"},
+            "relevance": {"pass": True, "note": "OK"},
+            "completeness": {"pass": True, "note": "OK"},
+            "overall_passed": True,
+        }
+        mock_fallback.side_effect = [{"accuracy": {"pass": True, "note": "OK"}}, good]
+        assert review_content("Some content")["overall_passed"] is True
+        assert mock_fallback.call_count == 2
+
+    @mock_patch("apps.ai.services._call_with_fallback")
+    def test_review_flags_instead_of_raising_when_reply_stays_malformed(self, mock_fallback):
+        from apps.ai.services import review_content
+        mock_fallback.return_value = {"nonsense": True}
+        result = review_content("Some content")
+        assert result["overall_passed"] is False
+        assert mock_fallback.call_count == 2
+
 
 @pytest.mark.django_db
 class TestAIGenerateContent:
