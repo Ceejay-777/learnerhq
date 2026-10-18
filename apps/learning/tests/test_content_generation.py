@@ -233,13 +233,24 @@ class TestGenTask:
         assert topic.summary == "A summary."
         mock_review_delay.assert_called_once_with(topic.id)
 
-    @patch("apps.learning.tasks.review_content_for_topic.delay")
-    @patch("apps.learning.services.generate_content")
-    def test_gen_task_skips_if_lock_held(self, mock_gen, mock_review_delay, topic):
-        Topic.objects.filter(id=topic.id).update(content_status=Topic.ContentStatus.GENERATING)
-        generate_content_for_topic(topic.id)
-        mock_gen.assert_not_called()
-        mock_review_delay.assert_not_called()
+    @patch("apps.learning.tasks.generate_content_for_topic.delay")
+    def test_request_generation_queues_only_once(self, mock_delay, topic):
+        from apps.learning.services import request_topic_generation
+        results = [request_topic_generation(topic.id) for _ in range(10)]
+        assert results.count(True) == 1
+        mock_delay.assert_called_once_with(topic.id)
+        topic.refresh_from_db()
+        assert topic.content_status == Topic.ContentStatus.GENERATING
+
+    @patch("apps.learning.events.send_event")
+    @patch("apps.learning.tasks.generate_content_for_topic.delay")
+    def test_request_generation_broker_down_marks_failed(self, mock_delay, _send, topic):
+        from kombu.exceptions import OperationalError
+        from apps.learning.services import request_topic_generation
+        mock_delay.side_effect = OperationalError("broker down")
+        assert request_topic_generation(topic.id) is False
+        topic.refresh_from_db()
+        assert topic.content_status == Topic.ContentStatus.FAILED
 
     @patch("apps.learning.tasks.review_content_for_topic.delay")
     @patch("apps.learning.services.generate_content")
@@ -260,23 +271,6 @@ class TestGenTask:
             generate_content_for_topic(topic.id)
         mock_review_delay.assert_not_called()
 
-    @patch("apps.learning.tasks.review_content_for_topic.delay")
-    @patch("apps.learning.services.generate_content")
-    def test_gen_task_retries_even_when_topic_already_generating(
-        self, mock_gen, mock_review_delay, topic
-    ):
-        """On retry (retries > 0), the task should skip the lock and proceed.
-        We verify this by confirming that when a topic is already GENERATING,
-        a normal call (retries=0) skips, but the code path for retries>0 exists."""
-        Topic.objects.filter(id=topic.id).update(content_status=Topic.ContentStatus.GENERATING)
-        # Normal call with retries=0 should skip (lock held)
-        generate_content_for_topic(topic.id)
-        mock_gen.assert_not_called()
-        mock_review_delay.assert_not_called()
-        # The retry path is tested by Celery integration; here we verify
-        # the code structure allows retries>0 to bypass the lock.
-        # The actual retry behavior is validated by the integration test
-        # where ProviderError triggers Celery retry with retries=1,2,3.
 
 
 @pytest.mark.django_db
@@ -319,8 +313,8 @@ class TestReviewTask:
         }
         review_content_for_topic(topic.id)
         topic.refresh_from_db()
-        assert topic.content_status == Topic.ContentStatus.NOT_GENERATED
-        assert topic.generation_started_at is None
+        # Re-claimed for the regeneration task that was just queued.
+        assert topic.content_status == Topic.ContentStatus.GENERATING
         assert topic.review_attempts == 1
         mock_gen_delay.assert_called_once_with(topic.id)
 

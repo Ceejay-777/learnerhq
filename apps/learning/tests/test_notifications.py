@@ -256,6 +256,31 @@ class TestSendNotification:
         topic.refresh_from_db()
         assert topic.content_status == Topic.ContentStatus.GENERATING
 
+    def test_notification_actually_generates_content(self, subject, usp):
+        """Regression: the scheduler used to claim the topic, so the task bailed."""
+        topic = Topic.objects.create(
+            subject=subject, title="T1", level=1, order=1,
+            content_status=Topic.ContentStatus.NOT_GENERATED,
+        )
+        from celery.exceptions import Retry
+
+        with patch("apps.learning.services.generate_content") as gen, patch(
+            "apps.learning.tasks.review_content_for_topic.delay"
+        ), patch.object(send_notification, "retry", side_effect=Retry()):
+            gen.return_value = {
+                "summary": "A summary.",
+                "resource_links": [
+                    {"title": "A", "url": "https://a.com", "type": "article"},
+                    {"title": "B", "url": "https://b.com", "type": "video"},
+                ],
+            }
+            with pytest.raises(Retry):  # review hasn't finished, so it retries
+                send_notification(usp.id)
+
+        assert gen.called
+        topic.refresh_from_db()
+        assert topic.summary == "A summary."
+
     def test_missing_usp_does_not_crash(self):
         send_notification(99999)
 

@@ -21,11 +21,9 @@ def generate_content_for_topic(self, topic_id: int) -> None:
     from .events import publish_topic_status
     from .models import Topic
     from .exceptions import GenerationError
-    from .services import ensure_topic_content_ready, generate_topic_content
+    from .services import generate_topic_content
 
-    if self.request.retries == 0 and not ensure_topic_content_ready(topic_id):
-        return
-
+    # The caller already claimed the topic (request_topic_generation).
     try:
         generate_topic_content(topic_id)
     except GenerationError:
@@ -55,7 +53,7 @@ def generate_content_for_topic(self, topic_id: int) -> None:
 def review_content_for_topic(self, topic_id: int) -> None:
     from .events import publish_topic_status
     from .models import Topic
-    from .services import review_topic_content
+    from .services import request_topic_generation, review_topic_content
 
     topic = Topic.objects.get(id=topic_id)
     passed = review_topic_content(topic_id)
@@ -78,7 +76,7 @@ def review_content_for_topic(self, topic_id: int) -> None:
             content_status=Topic.ContentStatus.NOT_GENERATED,
             generation_started_at=None,
         )
-        generate_content_for_topic.delay(topic_id)
+        request_topic_generation(topic_id)
     else:
         sentry_sdk.capture_message(
             f"Topic {topic_id}: all review attempts exhausted",
@@ -183,15 +181,13 @@ def send_notification(self, user_subject_progress_id):
 
     if next_topic is not None:
         if self.request.retries == 0:
-            from .services import ensure_topic_content_ready
+            from .services import request_topic_generation
 
             if next_topic.content_status == Topic.ContentStatus.FAILED:
                 Topic.objects.filter(id=next_topic.id).update(
                     content_status=Topic.ContentStatus.NOT_GENERATED,
                 )
-                next_topic.refresh_from_db()
-            if ensure_topic_content_ready(next_topic.id):
-                generate_content_for_topic.delay(next_topic.id)
+            request_topic_generation(next_topic.id)
 
         next_topic.refresh_from_db()
         content_not_ready = next_topic.content_status not in (

@@ -279,6 +279,31 @@ def ensure_topic_content_ready(topic_id: int) -> bool:
     return updated > 0
 
 
+def request_topic_generation(topic_id: int) -> bool:
+    """Queue content generation for a topic unless someone already has it.
+
+    The claim is one atomic UPDATE, so any number of callers (page opens,
+    scheduler, retries) queue at most one task. The task itself never claims.
+    Returns True when this call queued the task.
+    """
+    from .events import publish_topic_status
+    from .tasks import generate_content_for_topic
+
+    if not ensure_topic_content_ready(topic_id):
+        return False
+    try:
+        generate_content_for_topic.delay(topic_id)
+    except BrokerOperationalError:
+        # Nothing will run; surface FAILED so the user can retry instead of
+        # leaving the topic stuck in GENERATING.
+        Topic.objects.filter(id=topic_id).update(
+            content_status=Topic.ContentStatus.FAILED
+        )
+        publish_topic_status(topic_id)
+        return False
+    return True
+
+
 def generate_topic_content(topic_id: int) -> None:
     topic = Topic.objects.get(id=topic_id)
     max_attempts = 2
@@ -324,27 +349,23 @@ def review_topic_content(topic_id: int) -> bool:
 
 
 def ensure_buffer_ahead(topic: Topic) -> None:
-    from .tasks import generate_content_for_topic
-
     next_topics = Topic.objects.filter(
         subject=topic.subject,
         order__in=[topic.order + 1, topic.order + 2],
+        content_status=Topic.ContentStatus.NOT_GENERATED,
     )
     for t in next_topics:
-        if t.content_status == Topic.ContentStatus.NOT_GENERATED:
-            generate_content_for_topic.delay(t.id)
+        request_topic_generation(t.id)
 
 
 def generate_initial_batch(subject: Subject) -> None:
-    from .tasks import generate_content_for_topic
-
     first_topics = Topic.objects.filter(
         subject=subject,
         order__lte=3,
         content_status=Topic.ContentStatus.NOT_GENERATED,
     )
     for t in first_topics:
-        generate_content_for_topic.delay(t.id)
+        request_topic_generation(t.id)
 
 
 ROADMAP_SCHEMA = {
