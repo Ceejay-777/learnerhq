@@ -36,6 +36,11 @@ def subject():
     return s
 
 
+@pytest.fixture
+def enrolled(user, subject):
+    return UserSubjectProgress.objects.create(user=user, subject=subject)
+
+
 @pytest.mark.django_db
 class TestCheckLevelProgressView:
 
@@ -215,7 +220,7 @@ class TestGenerateQuizView:
         assert resp.status_code == status.HTTP_401_UNAUTHORIZED
 
     @patch("apps.learning.views.generate_quiz")
-    def test_generates_normal_quiz(self, mock_generate, auth_client, user, subject):
+    def test_generates_normal_quiz(self, mock_generate, auth_client, user, subject, enrolled):
         topic = Topic.objects.filter(subject=subject).first()
         mock_generate.return_value = QuizAttempt.objects.create(
             user=user, topic=topic, quiz_type="NORMAL", attempt_number=1,
@@ -233,7 +238,7 @@ class TestGenerateQuizView:
         assert data["total_points"] == 100
 
     @patch("apps.learning.views.generate_quiz")
-    def test_generate_handles_value_error(self, mock_generate, auth_client, subject):
+    def test_generate_handles_value_error(self, mock_generate, auth_client, subject, enrolled):
         topic = Topic.objects.filter(subject=subject).first()
         mock_generate.side_effect = ValueError("Normal quiz already passed for this topic")
         resp = auth_client.post(
@@ -254,16 +259,17 @@ class TestSubmitQuizView:
         assert resp.status_code == status.HTTP_401_UNAUTHORIZED
 
     @patch("apps.learning.views.submit_quiz")
-    def test_submits_quiz(self, mock_submit, auth_client, user, subject):
+    def test_submits_quiz(self, mock_submit, auth_client, user, subject, enrolled):
         topic = Topic.objects.filter(subject=subject).first()
-        mock_submit.return_value = QuizAttempt.objects.create(
+        attempt = QuizAttempt.objects.create(
             user=user, topic=topic, quiz_type="NORMAL", attempt_number=1,
             questions=[], total_points=100, score=80, passed=True,
         )
+        mock_submit.return_value = attempt
         TopicProgress.objects.create(user=user, topic=topic)
         resp = auth_client.post(
             f"/api/learning/topics/{topic.id}/quiz/submit",
-            {"attempt_id": 1, "answers": [0, 1, 2, 3]},
+            {"attempt_id": attempt.id, "answers": [0, 1, 2, 3]},
             format="json",
         )
         assert resp.status_code == status.HTTP_200_OK
@@ -273,12 +279,16 @@ class TestSubmitQuizView:
         assert data["total_points"] == 100
 
     @patch("apps.learning.views.submit_quiz")
-    def test_submit_handles_already_submitted(self, mock_submit, auth_client, subject):
+    def test_submit_handles_already_submitted(self, mock_submit, auth_client, user, subject, enrolled):
         topic = Topic.objects.filter(subject=subject).first()
+        attempt = QuizAttempt.objects.create(
+            user=user, topic=topic, quiz_type="NORMAL", attempt_number=1,
+            questions=[], total_points=100,
+        )
         mock_submit.side_effect = ValueError("Quiz already submitted")
         resp = auth_client.post(
             f"/api/learning/topics/{topic.id}/quiz/submit",
-            {"attempt_id": 1, "answers": [0, 1, 2, 3]},
+            {"attempt_id": attempt.id, "answers": [0, 1, 2, 3]},
             format="json",
         )
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
@@ -293,7 +303,7 @@ class TestMarkResourceLinksViewedView:
         resp = client.post(f"/api/learning/topics/{topic.id}/resource-links-viewed")
         assert resp.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_records_viewed_at(self, auth_client, user, subject):
+    def test_records_viewed_at(self, auth_client, user, subject, enrolled):
         topic = Topic.objects.filter(subject=subject).first()
         resp = auth_client.post(f"/api/learning/topics/{topic.id}/resource-links-viewed")
         assert resp.status_code == status.HTTP_200_OK
@@ -301,6 +311,55 @@ class TestMarkResourceLinksViewedView:
         assert data["status"] == "NOT_STARTED"
         assert data["resource_links_viewed_at"] is not None
         tp = TopicProgress.objects.get(user=user, topic=topic)
+
+
+@pytest.mark.django_db
+class TestTopicAccess:
+    """Topic endpoints: 404 if not enrolled, 403 if the level is locked."""
+
+    def _topic(self, subject):
+        return Topic.objects.filter(subject=subject, level=1).first()
+
+    def test_detail_not_enrolled_is_404(self, auth_client, subject):
+        resp = auth_client.get(f"/api/learning/topics/{self._topic(subject).id}")
+        assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_detail_enrolled_is_200(self, auth_client, subject, enrolled):
+        resp = auth_client.get(f"/api/learning/topics/{self._topic(subject).id}")
+        assert resp.status_code == status.HTTP_200_OK
+
+    def test_detail_locked_level_is_403(self, auth_client, subject, enrolled):
+        locked = Topic.objects.create(subject=subject, title="L2", level=2, order=20)
+        resp = auth_client.get(f"/api/learning/topics/{locked.id}")
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
+        assert resp.json()["detail"] == "This level is locked."
+
+    def test_other_endpoints_not_enrolled_is_404(self, auth_client, subject):
+        tid = self._topic(subject).id
+        for path in ("quiz/generate", "quiz/submit", "resource-links-viewed"):
+            resp = auth_client.post(f"/api/learning/topics/{tid}/{path}", {}, format="json")
+            assert resp.status_code == status.HTTP_404_NOT_FOUND, path
+
+    def test_locked_level_quiz_generate_is_403(self, auth_client, subject, enrolled):
+        locked = Topic.objects.create(subject=subject, title="L2", level=2, order=20)
+        resp = auth_client.post(f"/api/learning/topics/{locked.id}/quiz/generate", {}, format="json")
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_cannot_submit_someone_elses_attempt(self, auth_client, subject, enrolled):
+        topic = self._topic(subject)
+        other = User.objects.create_user(email="x@y.com", password="p")
+        attempt = QuizAttempt.objects.create(
+            user=other, topic=topic, quiz_type="NORMAL", attempt_number=1,
+            questions=[], total_points=100,
+        )
+        resp = auth_client.post(
+            f"/api/learning/topics/{topic.id}/quiz/submit",
+            {"attempt_id": attempt.id, "answers": []},
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_404_NOT_FOUND
+        attempt.refresh_from_db()
+        assert attempt.answers is None
 
 
 @pytest.mark.django_db

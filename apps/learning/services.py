@@ -10,6 +10,7 @@ from django.db.models import Count, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from kombu.exceptions import OperationalError as BrokerOperationalError
+from rest_framework.exceptions import PermissionDenied
 
 from apps.ai.exceptions import ProviderError
 from apps.ai.services import (
@@ -1302,6 +1303,26 @@ def _earn_points(user, topic, points: int) -> None:
     UserSubjectProgress.objects.filter(user=user, subject=topic.subject).update(
         points=models.F("points") + points,
     )
+
+
+def get_accessible_topic(user, topic_id: int) -> Topic:
+    """The topic, if the user is enrolled in its subject and has unlocked its level.
+
+    Not enrolled raises Topic.DoesNotExist (404); a locked level raises 403.
+    """
+    topic = Topic.objects.select_related("subject").get(id=topic_id)
+    usp = UserSubjectProgress.objects.filter(
+        user=user, subject_id=topic.subject_id
+    ).first()
+    if usp is None:
+        raise Topic.DoesNotExist
+    if topic.level > usp.level_unlocked:
+        raise PermissionDenied("This level is locked.")
+    return topic
+
+
+def get_own_quiz_attempt(user, topic, attempt_id) -> QuizAttempt:
+    return QuizAttempt.objects.get(id=attempt_id, user=user, topic=topic)
 
 
 def mark_resource_links_viewed(user, topic) -> TopicProgress:

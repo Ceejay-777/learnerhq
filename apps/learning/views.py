@@ -35,6 +35,8 @@ from .services import (
     check_level_progress,
     explore_subjects,
     generate_quiz,
+    get_accessible_topic,
+    get_own_quiz_attempt,
     get_subject_detail,
     get_subject_preview,
     global_leaderboard,
@@ -285,7 +287,7 @@ class GenerateQuizView(GenericAPIView):
         responses={200: GenerateQuizResponseSerializer, 400: None},
     )
     def post(self, request, topic_id):
-        topic = Topic.objects.get(id=topic_id)
+        topic = get_accessible_topic(request.user, topic_id)
         quiz_type = request.data.get("quiz_type", "NORMAL")
         prior_missed_questions = request.data.get("prior_missed_questions")
         try:
@@ -319,8 +321,10 @@ class SubmitQuizView(GenericAPIView):
         responses={200: SubmitQuizResponseSerializer, 400: None},
     )
     def post(self, request, topic_id):
+        topic = get_accessible_topic(request.user, topic_id)
         attempt_id = request.data.get("attempt_id")
         answers = request.data.get("answers")
+        get_own_quiz_attempt(request.user, topic, attempt_id)
         try:
             attempt = submit_quiz(attempt_id, answers)
         except ValueError as e:
@@ -348,7 +352,7 @@ class MarkResourceLinksViewedView(GenericAPIView):
         responses={200: ResourceLinksViewedResponseSerializer},
     )
     def post(self, request, topic_id):
-        topic = Topic.objects.get(id=topic_id)
+        topic = get_accessible_topic(request.user, topic_id)
         tp = mark_resource_links_viewed(request.user, topic)
         return Response({
             "data": {
@@ -419,7 +423,7 @@ class TopicDetailView(GenericAPIView):
         responses={200: TopicDetailSerializer},
     )
     def get(self, request, topic_id):
-        topic = Topic.objects.select_related("subject").get(id=topic_id)
+        topic = get_accessible_topic(request.user, topic_id)
         return Response({
             "data": {
                 "id": topic.id,
