@@ -43,6 +43,7 @@ from .services import (
     mark_resource_links_viewed,
     mark_subject_interest,
     others_learning,
+    prefetch_topic_content,
     remove_subject_interest,
     retry_roadmap,
     set_notification_frequency,
@@ -420,10 +421,11 @@ class TopicDetailView(GenericAPIView):
     @extend_schema(
         tags=["Learning"],
         summary="Get topic details and content",
-        responses={200: TopicDetailSerializer},
+        responses={200: TopicDetailSerializer, 403: None, 404: None},
     )
     def get(self, request, topic_id):
         topic = get_accessible_topic(request.user, topic_id)
+        prefetch_topic_content(topic)
         return Response({
             "data": {
                 "id": topic.id,

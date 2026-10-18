@@ -1321,6 +1321,18 @@ def get_accessible_topic(user, topic_id: int) -> Topic:
     return topic
 
 
+def prefetch_topic_content(topic: Topic) -> None:
+    """Start generating this topic and the next two if they have no content yet.
+
+    Safe on every page open: request_topic_generation only queues a task for a
+    topic it wins the claim on, so refreshes cost one UPDATE and queue nothing.
+    FAILED topics are not restarted here; that is the retry endpoint's job.
+    """
+    request_topic_generation(topic.id)
+    ensure_buffer_ahead(topic)
+    topic.refresh_from_db(fields=["content_status"])
+
+
 def get_own_quiz_attempt(user, topic, attempt_id) -> QuizAttempt:
     return QuizAttempt.objects.get(id=attempt_id, user=user, topic=topic)
 

@@ -317,6 +317,13 @@ class TestMarkResourceLinksViewedView:
 class TestTopicAccess:
     """Topic endpoints: 404 if not enrolled, 403 if the level is locked."""
 
+    @pytest.fixture(autouse=True)
+    def _no_generation(self):
+        # Opening a topic queues generation; keep Celery (eager in tests) from running it.
+        with patch("apps.learning.tasks.generate_content_for_topic.delay") as m:
+            self.delay = m
+            yield
+
     def _topic(self, subject):
         return Topic.objects.filter(subject=subject, level=1).first()
 
@@ -327,6 +334,24 @@ class TestTopicAccess:
     def test_detail_enrolled_is_200(self, auth_client, subject, enrolled):
         resp = auth_client.get(f"/api/learning/topics/{self._topic(subject).id}")
         assert resp.status_code == status.HTTP_200_OK
+
+    def test_opening_topic_queues_it_and_next_two_once(self, auth_client, subject, enrolled):
+        topic = self._topic(subject)
+        for _ in range(10):
+            resp = auth_client.get(f"/api/learning/topics/{topic.id}")
+        assert self.delay.call_count == 3
+        assert resp.json()["data"]["content_status"] == "GENERATING"
+
+    def test_opening_topic_does_not_restart_failed(self, auth_client, subject, enrolled):
+        topic = self._topic(subject)
+        Topic.objects.filter(id=topic.id).update(content_status="FAILED")
+        auth_client.get(f"/api/learning/topics/{topic.id}")
+        topic.refresh_from_db()
+        assert topic.content_status == "FAILED"
+
+    def test_rejected_open_queues_nothing(self, auth_client, subject):
+        auth_client.get(f"/api/learning/topics/{self._topic(subject).id}")
+        self.delay.assert_not_called()
 
     def test_detail_locked_level_is_403(self, auth_client, subject, enrolled):
         locked = Topic.objects.create(subject=subject, title="L2", level=2, order=20)
