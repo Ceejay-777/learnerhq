@@ -3,9 +3,9 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
-name = "learnerhq-backend"
+name = "wicky-backend"
 version = "0.1.0"
-description = "Backend API for LearnerHQ - gamified AI-powered learning platform"
+description = "Backend API for Wicky - gamified AI-powered learning platform"
 requires-python = ">=3.11"
 dependencies = [
     "django>=5.1",

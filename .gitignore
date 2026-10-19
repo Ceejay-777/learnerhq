@@ -28,11 +28,3 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
-
-# Project
-.superpowers/
-e2e_results/
-docs/
-
-.opencode
-.commandcode

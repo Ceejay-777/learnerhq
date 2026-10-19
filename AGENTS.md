@@ -1,4 +1,4 @@
-# LearnerHQ Backend — Agent Instructions
+# Wicky Backend — Agent Instructions
 
 ## One-liner
 

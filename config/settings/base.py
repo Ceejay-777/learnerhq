@@ -119,8 +119,8 @@ REST_FRAMEWORK = {
 
 # drf-spectacular
 SPECTACULAR_SETTINGS = {
-    'TITLE': 'LearnerHQ API',
-    'DESCRIPTION': 'Backend API for LearnerHQ',
+    'TITLE': 'Wicky API',
+    'DESCRIPTION': 'Backend API for Wicky',
     'VERSION': '0.1.0',
     'SERVE_INCLUDE_SCHEMA': False,
     'SWAGGER_UI_SETTINGS': {

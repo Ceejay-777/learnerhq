@@ -46,7 +46,7 @@ class Command(BaseCommand):
 
         User = get_user_model()
         user, created = User.objects.get_or_create(
-            email="seed@learnerhq.dev",
+            email="seed@wicky.dev",
             defaults={
                 "first_name": "Seed",
                 "last_name": "Bot",

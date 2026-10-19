@@ -16,7 +16,7 @@ from apps.learning.models import (
 )
 
 PASSWORD = "SeedPass123!"
-DOMAIN = "seed.learnerhq.test"
+DOMAIN = "seed.wicky.test"
 MAIN_USERS = [("demo1", "Demo One"), ("demo2", "Demo Two")]
 NPC_COUNT = 25
 
